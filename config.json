@@ -1,0 +1,80 @@
+{
+  "providers": {
+    "zhipu": {
+      "apiKey": "YOUR_ZAI_API_KEY_HERE"
+    },
+    "openrouter": {
+      "apiKey": ""
+    },
+    "openai": {
+      "apiKey": ""
+    },
+    "anthropic": {
+      "apiKey": ""
+    },
+    "deepseek": {
+      "apiKey": ""
+    },
+    "moonshot": {
+      "apiKey": ""
+    },
+    "minimax": {
+      "apiKey": ""
+    },
+    "gemini": {
+      "apiKey": ""
+    },
+    "vllm": {
+      "apiKey": "dummy",
+      "apiBase": ""
+    },
+    "groq": {
+      "apiKey": ""
+    },
+    "dashscope": {
+      "apiKey": ""
+    },
+    "aihubmix": {
+      "apiKey": ""
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "zai/glm-4-plus"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "token": "",
+      "allowFrom": []
+    },
+    "discord": {
+      "enabled": false,
+      "token": "",
+      "allowFrom": []
+    },
+    "slack": {
+      "enabled": false,
+      "botToken": "",
+      "appToken": "",
+      "groupPolicy": "mention"
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "apiKey": "",
+        "maxResults": 5
+      }
+    },
+    "exec": {
+      "timeout": 60
+    },
+    "restrictToWorkspace": false
+  }
+}
