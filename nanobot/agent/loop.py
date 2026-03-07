@@ -65,6 +65,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        disabled_tools: list[str] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -82,6 +83,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.disabled_tools: set[str] = set(disabled_tools or [])
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -113,21 +115,29 @@ class AgentLoop:
         self._register_default_tools()
 
     def _register_default_tools(self) -> None:
-        """Register the default set of tools."""
+        """Register the default set of tools, skipping any in disabled_tools."""
+        skip = self.disabled_tools
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.restrict_to_workspace,
-            path_append=self.exec_config.path_append,
-        ))
-        self.tools.register(WebSearchTool(api_key=self.brave_api_key, proxy=self.web_proxy))
-        self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
-        if self.cron_service:
+            tool = cls(workspace=self.workspace, allowed_dir=allowed_dir)
+            if tool.name not in skip:
+                self.tools.register(tool)
+        if "exec" not in skip:
+            self.tools.register(ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                path_append=self.exec_config.path_append,
+            ))
+        if "web_search" not in skip:
+            self.tools.register(WebSearchTool(api_key=self.brave_api_key, proxy=self.web_proxy))
+        if "web_fetch" not in skip:
+            self.tools.register(WebFetchTool(proxy=self.web_proxy))
+        if "message" not in skip:
+            self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
+        if "spawn" not in skip:
+            self.tools.register(SpawnTool(manager=self.subagents))
+        if self.cron_service and "cron" not in skip:
             self.tools.register(CronTool(self.cron_service))
 
     async def _connect_mcp(self) -> None:

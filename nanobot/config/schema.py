@@ -326,6 +326,7 @@ class ToolsConfig(Base):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    disabled: list[str] = Field(default_factory=list)  # Tool names to exclude from registration
 
 
 class Config(BaseSettings):
