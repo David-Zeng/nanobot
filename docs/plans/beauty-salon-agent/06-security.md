@@ -84,6 +84,22 @@ No channels at all — completely unreachable from external networks.
 
 ---
 
+## 8. Tool Restrictions (`tools.disabled`)
+
+`allowFrom` is message-level access control — it decides who can talk to the agent. But once a message is accepted, the LLM has access to all registered tools. A jailbreak or hallucination could cause the Customer Agent to call `write_file` or `exec`.
+
+The solution is a `tools.disabled` list in `config.json` (a planned nanobot feature). Disabled tools are never registered in the tool registry — they don't appear in `get_definitions()`, so the LLM never knows they exist.
+
+| Agent | Disabled tools | Reason |
+|-------|---------------|--------|
+| customer-agent | `write_file`, `edit_file`, `exec`, `cron`, `spawn` | Customers must never modify workspace files or run shell commands |
+| admin-agent | _(none)_ | Owner needs full access |
+| background-agent | `message` | Prevent unsolicited messages to customers outside of its remit |
+
+This is a hard enforcement boundary — not an instruction the LLM can reason around.
+
+---
+
 ## 4. Customer Duplicate Prevention
 
 Enforced at the DB level via a trigger. Prevents duplicate records for the same IM account or phone number.

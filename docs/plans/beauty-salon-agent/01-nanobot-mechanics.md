@@ -209,3 +209,21 @@ They share nothing by default — shared state goes through PostgreSQL and the m
 | `cron` | Add/list/remove scheduled jobs |
 
 The `exec` tool is particularly powerful — agents can run `psql` commands to read/write PostgreSQL, grep session files, and run backup scripts.
+
+### Tool Disabling (planned nanobot feature)
+
+By default all tools are registered for every agent. The beauty salon system requires a `tools.disabled` config option so the Customer Agent cannot call write/exec tools — even if the LLM is tricked into trying.
+
+```json
+"tools": {
+  "disabled": ["write_file", "edit_file", "exec", "cron", "spawn"]
+}
+```
+
+Disabled tools are never registered in `ToolRegistry` → never included in `get_definitions()` → the LLM doesn't know they exist. This is a hard enforcement boundary, not an instruction.
+
+| Agent | Disabled tools |
+|-------|---------------|
+| customer-agent | `write_file`, `edit_file`, `exec`, `cron`, `spawn` |
+| admin-agent | _(none — full access needed)_ |
+| background-agent | `message` _(prevent unsolicited customer messages)_ |

@@ -9,8 +9,11 @@ gantt
     title Implementation Roadmap
     dateFormat  YYYY-MM-DD
 
+    section Phase 0 - nanobot Feature
+    tools.disabled in config.json    :a0, 2026-03-07, 1d
+
     section Phase 1 - Foundation
-    DB schema + init.sql             :a1, 2026-03-07, 2d
+    DB schema + init.sql             :a1, after a0, 2d
     Docker Compose + health checks   :a2, after a1, 2d
     Workspace files for all 3 agents :a3, after a2, 2d
 
@@ -44,6 +47,44 @@ gantt
     End-to-end testing               :f2, after f1, 3d
     Documentation                    :f3, after f2, 2d
 ```
+
+---
+
+## Phase 0 — nanobot Feature: `tools.disabled`
+
+**Goal:** Hard-enforce tool restrictions per agent instance via config, so the LLM cannot call disallowed tools regardless of what it's instructed to do.
+
+```mermaid
+flowchart LR
+    A[Add disabled list to ToolsConfig<br/>in config/schema.py] --> B[Skip disabled tools<br/>in _register_default_tools]
+    B --> C[tools.get_definitions excludes them<br/>LLM never sees them]
+    C --> D[customer-agent config.json<br/>disabled: write_file, edit_file, exec, cron]
+    D --> E[Verify: LLM cannot write files<br/>even if prompted to]
+```
+
+**Why:** `allowFrom` only controls who can send messages. Once a message reaches the agent loop, all tools are available to the LLM. A jailbreak or hallucination could cause the Customer Agent to call `write_file` or `exec`. With `tools.disabled`, those tools are never registered — they don't exist from the LLM's perspective.
+
+**nanobot changes required:**
+
+1. `nanobot/config/schema.py` — add `disabled: list[str]` to `ToolsConfig`
+2. `nanobot/agent/loop.py` — pass `disabled` into `AgentLoop.__init__`, skip disabled tools in `_register_default_tools`
+
+**Customer Agent `config.json` addition:**
+
+```json
+"tools": {
+  "disabled": ["write_file", "edit_file", "exec", "cron", "spawn"]
+}
+```
+
+This leaves the Customer Agent with only: `read_file`, `list_dir`, `web_search`, `web_fetch`, `message`.
+
+- [ ] Add `disabled: list[str]` to `ToolsConfig` in `nanobot/config/schema.py`
+- [ ] Read `disabled` in `AgentLoop._register_default_tools` and skip those tools
+- [ ] Add `tools.disabled` to customer-agent `config.json`
+- [ ] Verify: attempt to call `write_file` from customer-agent returns tool-not-found error
+
+**Done when:** Customer Agent cannot write or execute anything, even if the LLM tries.
 
 ---
 
