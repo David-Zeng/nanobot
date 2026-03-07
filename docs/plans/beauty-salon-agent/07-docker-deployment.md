@@ -1,5 +1,24 @@
 # Docker Deployment
 
+```mermaid
+flowchart TD
+    subgraph Docker Compose
+        PG[postgres:15-alpine<br/>nanobot_db]
+        CA[customer-agent<br/>port 18790]
+        AA[admin-agent<br/>port 18791]
+        BA[background-agent<br/>port 18792]
+    end
+    PG -->|service_healthy| CA
+    PG -->|service_healthy| AA
+    PG -->|service_healthy| BA
+    CA -->|read/write| PG
+    AA -->|read/write| PG
+    BA -->|read/write| PG
+    CA -->|workspace volume| VOL[data/customer-agent/workspace]
+    BA -->|read-only mount| VOL
+    BA -->|own workspace| BAVOL[data/background-agent/workspace]
+```
+
 ---
 
 ## 1. Folder Structure

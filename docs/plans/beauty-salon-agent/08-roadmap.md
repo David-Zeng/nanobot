@@ -51,6 +51,16 @@ gantt
 
 **Goal:** Running infra with empty agents.
 
+```mermaid
+flowchart LR
+    A[Write init.sql<br/>schema + seed data] --> B[Write docker-compose.yml<br/>with health checks]
+    B --> C[Create workspace files<br/>SOUL, AGENTS, USER per agent]
+    C --> D[Pre-seed cron/jobs.json<br/>for background-agent]
+    D --> E{docker compose up}
+    E -->|4 containers healthy| F[Done]
+    E -->|Error| G[Fix + retry]
+```
+
 - [ ] Write `init.sql` with full schema (all tables, enums, indexes, trigger, seed data)
 - [ ] Write `docker-compose.yml` with health checks
 - [ ] Create workspace directories and initial workspace files for all 3 agents
@@ -66,6 +76,18 @@ gantt
 ## Phase 2 — Customer Agent
 
 **Goal:** Customer can book an appointment end-to-end via Telegram.
+
+```mermaid
+flowchart TD
+    A[Telegram channel<br/>responds to messages] --> B[IM resolution<br/>lookup or create customer]
+    B --> C[New customer registration<br/>ask name + mobile]
+    C --> D[IDENTITY.md injection<br/>customer record + memory per message]
+    D --> E[Service query<br/>list from DB]
+    E --> F[Booking flow<br/>check availability + confirm + INSERT]
+    F --> G[last_message_at updated<br/>after every response]
+    G --> H[Appointment modification<br/>reschedule or cancel]
+    H --> I[Operation history<br/>logged for all actions]
+```
 
 - [ ] Telegram channel responds to messages
 - [ ] IM resolution: lookup customer by telegram_id, create new record if not found
@@ -85,6 +107,16 @@ gantt
 
 **Goal:** Conversations are summarised, reminders are sent.
 
+```mermaid
+flowchart TD
+    A[Heartbeat fires every 5 min] --> B[Idle detection<br/>customers inactive over 15 min]
+    B --> C[Summarisation<br/>read JSONL + LLM + INSERT customer_memory]
+    C --> D[Verify: IDENTITY.md injection<br/>correct in next conversation]
+    D --> E[Reminders<br/>find due + send via message tool]
+    E --> F[Daily report<br/>generate + deliver to admin]
+    F --> G[Nightly cleanup<br/>old appointments + failed tasks]
+```
+
 - [ ] Heartbeat fires every 5 min and processes `HEARTBEAT.md` tasks
 - [ ] Idle detection query finds customers inactive > 15 min
 - [ ] Summarisation: reads session JSONL, generates summary, inserts `customer_memory`
@@ -100,6 +132,16 @@ gantt
 ## Phase 4 — Admin Agent
 
 **Goal:** Owner can manage the system via Telegram.
+
+```mermaid
+flowchart TD
+    A[Admin Telegram channel<br/>restricted to owner only] --> B[Customer management<br/>list, view, update, soft-delete]
+    B --> C[Appointment management<br/>today schedule + cancel/modify]
+    C --> D[Settings management<br/>read + update settings table]
+    D --> E[Operation history<br/>audit trail + reports]
+    E --> F[Manual backup trigger<br/>via admin command]
+    F --> G[Daily report acknowledgement<br/>from Background Agent]
+```
 
 - [ ] Admin Telegram channel responds (allowFrom restricted to owner)
 - [ ] Customer management: list, view, update, soft-delete customers
@@ -117,6 +159,16 @@ gantt
 
 **Goal:** WhatsApp and Discord customers work the same as Telegram.
 
+```mermaid
+flowchart TD
+    A[WhatsApp<br/>nanobot channels login] --> B[IM resolution<br/>whatsapp_id lookup]
+    B --> C[Booking flow<br/>same as Telegram]
+    D[Discord<br/>bot invited to server] --> E[Mention-based interaction<br/>discord_id lookup]
+    E --> C
+    C --> F[Cross-channel identity<br/>mobile number deduplication]
+    F --> G[Admin daily report<br/>shows all channels]
+```
+
 - [ ] WhatsApp: link device (`nanobot channels login`), test IM resolution and booking
 - [ ] Discord: bot invited to server, mention-based interaction, booking flow
 - [ ] Cross-channel identity: if a WhatsApp customer also connects via Telegram, they are recognised as the same customer by mobile number
@@ -128,6 +180,16 @@ gantt
 ## Phase 6 — Polish
 
 **Goal:** System is production-ready.
+
+```mermaid
+flowchart TD
+    A[Guardrail tuning<br/>Cantonese/English edge cases] --> B[Rate limiting<br/>rapid-fire message test]
+    B --> C[Error handling<br/>psql failure + LLM error scenarios]
+    C --> D[Load test<br/>10 concurrent customers]
+    D --> E[Backup/restore drill<br/>drop table + restore + verify]
+    E --> F[Documentation update<br/>findings from implementation]
+    F --> G[Production ready]
+```
 
 - [ ] Guardrail tuning: test edge cases (mixed Cantonese/English, ambiguous messages)
 - [ ] Rate limiting: test with rapid-fire messages

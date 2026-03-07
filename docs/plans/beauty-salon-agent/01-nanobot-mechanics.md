@@ -8,13 +8,16 @@ Understanding nanobot internals is essential before designing the beauty salon s
 
 Every time the agent processes a message, `ContextBuilder` assembles the system prompt in this order:
 
-```
-1. Identity block       — hardcoded: "You are nanobot", workspace path, core guidelines
-2. Bootstrap files      — loaded from workspace (if they exist):
-                           AGENTS.md, SOUL.md, USER.md, TOOLS.md, IDENTITY.md
-3. Memory               — contents of memory/MEMORY.md (always injected)
-4. Always-on skills     — skills with `always: true` in their frontmatter
-5. Skills summary       — list of on-demand skills the agent can read
+```mermaid
+flowchart TD
+    A[Message received] --> B[Build system prompt]
+    B --> C[1. Identity block<br/>hardcoded: nanobot identity + workspace path]
+    C --> D[2. Bootstrap files<br/>AGENTS.md, SOUL.md, USER.md, TOOLS.md, IDENTITY.md]
+    D --> E[3. Memory<br/>memory/MEMORY.md always injected]
+    E --> F[4. Always-on skills<br/>skills with always: true]
+    F --> G[5. Skills summary<br/>list of on-demand skills]
+    G --> H[Prepend runtime context to user message<br/>current time, channel, chat_id]
+    H --> I[Send to LLM]
 ```
 
 **Runtime context** (current time, channel name, chat_id) is prepended to each user message — not the system prompt.
@@ -57,6 +60,27 @@ Session key format: `channel:chat_id` — e.g. `telegram:123456789`
 
 The `updated_at` field in the metadata line is the idle detection signal used by the Background Agent.
 
+```mermaid
+flowchart LR
+    subgraph "sessions/"
+        F1["telegram_123456789.jsonl"]
+        F2["whatsapp_6591234567.jsonl"]
+        F3["discord_987654321.jsonl"]
+    end
+
+    subgraph "JSONL structure"
+        M["Line 1: metadata<br/>_type, key, created_at, updated_at, last_consolidated"]
+        T1["Line 2: user turn"]
+        T2["Line 3: assistant turn"]
+        T3["Line N: ..."]
+    end
+
+    F1 --> M
+    M --> T1
+    T1 --> T2
+    T2 --> T3
+```
+
 ---
 
 ## 4. Memory Consolidation
@@ -72,6 +96,19 @@ When a session exceeds `memory_window` (default 100) unconsolidated messages, na
 
 This is automatic — no code needed. The `/new` command triggers it immediately (archive_all mode).
 
+```mermaid
+flowchart TD
+    A[Session exceeds memory_window] --> B[Collect old messages]
+    B --> C[Call LLM with save_memory tool]
+    C --> D{LLM returns}
+    D --> E[history_entry<br/>2-5 sentence summary]
+    D --> F[memory_update<br/>full updated MEMORY.md]
+    E --> G[Append to memory/HISTORY.md]
+    F --> H[Overwrite memory/MEMORY.md]
+    G --> I[Update last_consolidated pointer]
+    H --> I
+```
+
 **Problem for multi-customer use:** `MEMORY.md` is one file per workspace. All customer memories would merge. Solution: use `customer_memory` DB table + per-request `IDENTITY.md` injection (see §04).
 
 ---
@@ -80,11 +117,17 @@ This is automatic — no code needed. The `/new` command triggers it immediately
 
 Runs on a configurable interval (default: every 30 minutes).
 
-Flow:
-1. Reads `HEARTBEAT.md` from workspace
-2. Calls LLM with a `heartbeat` tool — asks: "Are there active tasks?"
-3. If LLM returns `action: run` — executes the tasks via the full agent loop
-4. Delivers result to the most recently active chat channel
+```mermaid
+flowchart TD
+    A[Timer fires every N minutes] --> B[Read HEARTBEAT.md]
+    B --> C{File exists and has content?}
+    C -->|No| D[Skip]
+    C -->|Yes| E[Call LLM with heartbeat tool<br/>Are there active tasks?]
+    E --> F{LLM decision}
+    F -->|action: skip| D
+    F -->|action: run| G[Run full agent loop<br/>with task description]
+    G --> H[Deliver result to<br/>most recent active channel]
+```
 
 **For the Background Agent:** heartbeat interval is set to 5 minutes. `HEARTBEAT.md` contains the idle-check task.
 
@@ -112,6 +155,33 @@ Run multiple nanobot instances with:
 
 ```bash
 nanobot gateway -w /path/to/workspace -c /path/to/config.json -p PORT
+```
+
+```mermaid
+graph LR
+    subgraph "customer-agent :18790"
+        WA1[workspace A]
+        CFG1[config A]
+    end
+    subgraph "admin-agent :18791"
+        WA2[workspace B]
+        CFG2[config B]
+    end
+    subgraph "background-agent :18792"
+        WA3[workspace C]
+        CFG3[config C]
+    end
+
+    subgraph "Shared"
+        DB[(PostgreSQL)]
+        VOL[Shared Volume]
+    end
+
+    WA1 <--> DB
+    WA2 <--> DB
+    WA3 <--> DB
+    WA1 --- VOL
+    WA3 --- VOL
 ```
 
 Each instance has completely isolated:

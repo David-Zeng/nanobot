@@ -46,20 +46,20 @@ graph TB
 
     subgraph "Docker Network: nanobot-net"
         subgraph "customer-agent container"
-            CA[nanobot gateway\nSOUL: Beauty Salon Assistant\nChannels: TG + WA + DC]
+            CA[nanobot gateway<br/>SOUL: Beauty Salon Assistant<br/>Channels: TG + WA + DC]
         end
 
         subgraph "admin-agent container"
-            AA[nanobot gateway\nSOUL: Admin Assistant\nChannel: TG admin only]
+            AA[nanobot gateway<br/>SOUL: Admin Assistant<br/>Channel: TG admin only]
         end
 
         subgraph "background-agent container"
-            BA[nanobot gateway\nNo channels\nDriven by heartbeat + cron]
+            BA[nanobot gateway<br/>No channels<br/>Driven by heartbeat + cron]
         end
 
         subgraph "Shared Infrastructure"
-            DB[(PostgreSQL\nnanobot_db)]
-            VOL[Shared Volume\n./data/]
+            DB[(PostgreSQL<br/>nanobot_db)]
+            VOL[Shared Volume<br/>./data/]
         end
     end
 

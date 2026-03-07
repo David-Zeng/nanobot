@@ -1,5 +1,18 @@
 # Security & Guardrails
 
+```mermaid
+flowchart TD
+    MSG[Incoming message] --> GRD[Topic guardrail<br/>LLM classification]
+    GRD -->|off-topic| REJECT[Polite rejection response]
+    GRD -->|on-topic| RATE[Rate limit check<br/>grep session JSONL]
+    RATE -->|exceeded| SLOW[Please slow down response]
+    RATE -->|ok| AC[Access control<br/>nanobot allowFrom filter]
+    AC -->|blocked| DROP[Silently dropped]
+    AC -->|allowed| PROC[Process message]
+    PROC --> DUP[Duplicate check<br/>DB trigger on INSERT]
+    PROC --> AUDIT[Audit trail<br/>operation_history INSERT]
+```
+
 ---
 
 ## 1. Topic Guardrail

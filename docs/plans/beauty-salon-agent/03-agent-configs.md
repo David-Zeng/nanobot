@@ -2,6 +2,28 @@
 
 Each agent has its own workspace directory and config.json. This file documents what goes in each.
 
+```mermaid
+flowchart LR
+    subgraph customer-agent
+        CA_CFG[config.json<br/>Telegram + WhatsApp + Discord<br/>allowFrom: all]
+        CA_SOUL[SOUL.md<br/>friendly bilingual persona]
+        CA_AGENTS[AGENTS.md<br/>guardrail + booking flow]
+        CA_ID[IDENTITY.md<br/>per-request customer context]
+    end
+    subgraph admin-agent
+        AD_CFG[config.json<br/>Telegram only<br/>allowFrom: owner]
+        AD_SOUL[SOUL.md<br/>efficient admin persona]
+        AD_AGENTS[AGENTS.md<br/>management instructions]
+    end
+    subgraph background-agent
+        BG_CFG[config.json<br/>no channels<br/>heartbeat: 300s]
+        BG_SOUL[SOUL.md<br/>silent worker persona]
+        BG_AGENTS[AGENTS.md<br/>psql + summarise + remind]
+        BG_HB[HEARTBEAT.md<br/>3 active tasks]
+        BG_CRON[cron/jobs.json<br/>daily report + cleanup]
+    end
+```
+
 ---
 
 ## 1. Customer Agent
