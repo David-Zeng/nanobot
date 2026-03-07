@@ -54,6 +54,35 @@ Rate limits are enforced via AGENTS.md instructions. The agent counts recent mes
 **Why not DB-backed rate limiting:**
 nanobot has no pre-message hook for custom code injection. DB queries per-message would require modifying nanobot core. The AGENTS.md instruction approach adds zero overhead for normal conversations.
 
+### How it works (implementation detail)
+
+The rate limit check is embedded in AGENTS.md as an instruction the agent follows at the start of every response:
+
+1. Agent receives a new message
+2. Agent runs `exec` → `grep -c '"role":"user"' /app/workspace/session.jsonl` to count recent user turns
+3. If count in the last 60 seconds exceeds `rate_limit_per_minute` (read once from `settings` at startup), respond with the slow-down message and stop
+4. If count in the last 3600 seconds exceeds `rate_limit_per_hour`, same response
+5. Otherwise, proceed normally
+
+**The window resets automatically** — it's a sliding window over the session JSONL timestamps, not a counter that needs to be reset.
+
+### Testability constraints
+
+Because enforcement is LLM-instruction-based (not code), rate limiting **cannot be unit tested in Layers 1–3**. All rate limit tests live in Layer 5 (manual, requires real LLM). This is a known tradeoff — the alternative (modifying nanobot core) was rejected to keep the system self-contained.
+
+The DB seed values (`rate_limit_per_minute`, `rate_limit_per_hour`) are tested in Layer 1 (`test_seed_data.py`) and Layer 2 (`test_workspace_files.py`) to confirm the values are present and the AGENTS.md references them — but the enforcement logic itself is only verified end-to-end.
+
+### Edge cases the agent must handle
+
+| Scenario | Expected behaviour |
+|----------|--------------------|
+| 11 messages in 60 s | Block on 11th, reply with slow-down message |
+| 51 messages in 60 min | Block on 51st even if per-minute limit not exceeded |
+| Wait 61 s after block, send one more | Unblocked — window has passed |
+| Mix of on-topic and off-topic during burst | Off-topic rejected by guardrail first; rate limit counter still increments |
+| Burst stops, then resumes 2 min later | Counter resets; user unblocked |
+| Two different users bursting simultaneously | Each user's session JSONL is separate; limits are per-user |
+
 ---
 
 ## 3. Access Control
