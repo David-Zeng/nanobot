@@ -66,6 +66,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         disabled_tools: list[str] | None = None,
+        fallback_models: list[str] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -73,6 +74,7 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
+        self.fallback_models = fallback_models or []
         self.max_iterations = max_iterations
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -208,6 +210,7 @@ class AgentLoop:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 reasoning_effort=self.reasoning_effort,
+                fallback_models=self.fallback_models,
             )
 
             if response.has_tool_calls:

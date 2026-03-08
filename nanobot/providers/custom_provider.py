@@ -6,9 +6,12 @@ import uuid
 from typing import Any
 
 import json_repair
-from openai import AsyncOpenAI
+from loguru import logger
+from openai import AsyncOpenAI, RateLimitError
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+
+_CAPACITY_PHRASES = ("maximum capacity", "try again later", "rate limit", "overloaded")
 
 
 class CustomProvider(LLMProvider):
@@ -25,9 +28,8 @@ class CustomProvider(LLMProvider):
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
                    model: str | None = None, max_tokens: int = 4096, temperature: float = 0.7,
-                   reasoning_effort: str | None = None) -> LLMResponse:
+                   reasoning_effort: str | None = None, fallback_models: list[str] | None = None) -> LLMResponse:
         kwargs: dict[str, Any] = {
-            "model": model or self.default_model,
             "messages": self._sanitize_empty_content(messages),
             "max_tokens": max(1, max_tokens),
             "temperature": temperature,
@@ -36,10 +38,27 @@ class CustomProvider(LLMProvider):
             kwargs["reasoning_effort"] = reasoning_effort
         if tools:
             kwargs.update(tools=tools, tool_choice="auto")
-        try:
-            return self._parse(await self._client.chat.completions.create(**kwargs))
-        except Exception as e:
-            return LLMResponse(content=f"Error: {e}", finish_reason="error")
+
+        candidates = [model or self.default_model] + (fallback_models or [])
+        last_err: Exception | None = None
+        for candidate in candidates:
+            try:
+                result = self._parse(await self._client.chat.completions.create(model=candidate, **kwargs))
+                if candidate != candidates[0]:
+                    logger.info("Fallback model {} succeeded", candidate)
+                return result
+            except RateLimitError as e:
+                logger.warning("Model {} rate-limited (429), trying next fallback", candidate)
+                last_err = e
+            except Exception as e:
+                err_str = str(e).lower()
+                if any(p in err_str for p in _CAPACITY_PHRASES):
+                    logger.warning("Model {} at capacity, trying next fallback", candidate)
+                    last_err = e
+                else:
+                    return LLMResponse(content=f"Error: {e}", finish_reason="error")
+
+        return LLMResponse(content=f"Error: {last_err}", finish_reason="error")
 
     def _parse(self, response: Any) -> LLMResponse:
         choice = response.choices[0]
