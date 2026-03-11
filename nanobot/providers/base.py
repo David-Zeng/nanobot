@@ -159,6 +159,7 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
+        fallback_models: list[str] | None = None,
     ) -> LLMResponse:
         """Call chat() with retry on transient provider failures."""
         for attempt, delay in enumerate(self._CHAT_RETRY_DELAYS, start=1):
@@ -170,6 +171,7 @@ class LLMProvider(ABC):
                     max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
+                    fallback_models=fallback_models,
                 )
             except asyncio.CancelledError:
                 raise
