@@ -1,5 +1,6 @@
 """Base channel interface for chat platforms."""
 
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -30,6 +31,7 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
+        self._rate_limit_timestamps: dict[str, list[float]] = {}
 
     @abstractmethod
     async def start(self) -> None:
@@ -68,6 +70,23 @@ class BaseChannel(ABC):
             return True
         return str(sender_id) in allow_list
 
+    def is_rate_limited(self, sender_id: str) -> bool:
+        """Return True if sender has exceeded the rate limit window."""
+        rl = getattr(self.config, "rate_limit", None)
+        if rl is None or not rl.enabled:
+            return False
+
+        now = time.time()
+        cutoff = now - rl.window_seconds
+        history = self._rate_limit_timestamps.setdefault(sender_id, [])
+        self._rate_limit_timestamps[sender_id] = [t for t in history if t > cutoff]
+
+        if len(self._rate_limit_timestamps[sender_id]) >= rl.max_messages:
+            return True
+
+        self._rate_limit_timestamps[sender_id].append(now)
+        return False
+
     async def _handle_message(
         self,
         sender_id: str,
@@ -96,6 +115,22 @@ class BaseChannel(ABC):
                 "Add them to allowFrom list in config to grant access.",
                 sender_id, self.name,
             )
+            return
+
+        if self.is_rate_limited(sender_id):
+            rl = getattr(self.config, "rate_limit", None)
+            reply_text = rl.reply_text if rl else ""
+            if reply_text:
+                logger.info("Rate limit hit for sender {} on channel {}", sender_id, self.name)
+                out = OutboundMessage(
+                    channel=self.name,
+                    chat_id=str(chat_id),
+                    content=reply_text,
+                    metadata=metadata or {},
+                )
+                await self.bus.publish_outbound(out)
+            else:
+                logger.debug("Rate limit hit for sender {} on channel {} (silent drop)", sender_id, self.name)
             return
 
         msg = InboundMessage(

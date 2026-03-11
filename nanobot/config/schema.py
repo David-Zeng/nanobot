@@ -14,6 +14,15 @@ class Base(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
+class RateLimitConfig(Base):
+    """Per-sender rate limiting using a sliding window."""
+
+    enabled: bool = False
+    max_messages: int = 5       # max messages allowed in the window
+    window_seconds: int = 60    # rolling window size in seconds
+    reply_text: str = "Please wait a moment before sending more messages."
+
+
 class WhatsAppConfig(Base):
     """WhatsApp channel configuration."""
 
@@ -34,6 +43,7 @@ class TelegramConfig(Base):
     )
     reply_to_message: bool = False  # If true, bot replies quote the original message
     group_policy: Literal["open", "mention"] = "mention"  # "mention" responds when @mentioned or replied to, "open" responds to all
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 
 class FeishuConfig(Base):
