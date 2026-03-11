@@ -69,6 +69,7 @@ class HeartbeatService:
         self.enabled = enabled
         self._running = False
         self._task: asyncio.Task | None = None
+        self._tick_lock = asyncio.Lock()
 
     @property
     def heartbeat_file(self) -> Path:
@@ -139,6 +140,14 @@ class HeartbeatService:
 
     async def _tick(self) -> None:
         """Execute a single heartbeat tick."""
+        if self._tick_lock.locked():
+            logger.warning("Heartbeat: previous tick still running, skipping")
+            return
+        async with self._tick_lock:
+            await self._tick_inner()
+
+    async def _tick_inner(self) -> None:
+        """Inner tick logic, called under _tick_lock."""
         content = self._read_heartbeat_file()
         if not content:
             logger.debug("Heartbeat: HEARTBEAT.md missing or empty")

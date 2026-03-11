@@ -5,6 +5,7 @@ import os
 import select
 import signal
 import sys
+import time
 from pathlib import Path
 
 # Force UTF-8 encoding for Windows console
@@ -428,7 +429,7 @@ def gateway(
 
         return await agent.process_direct(
             tasks,
-            session_key="heartbeat",
+            session_key=f"heartbeat:{int(time.time())}",
             channel=channel,
             chat_id=chat_id,
             on_progress=_silent,
