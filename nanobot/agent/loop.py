@@ -249,6 +249,17 @@ class AgentLoop:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    # Warn the agent 2 iterations before hitting the limit so it can
+                    # wrap up gracefully (write result files, update status) instead of
+                    # being hard-cut mid-task.
+                    if iteration == self.max_iterations - 1:
+                        warning = (
+                            f"\n\n[System: 1 tool call remaining before the iteration limit "
+                            f"({self.max_iterations}). Finalise your task now — write any "
+                            "result files and update status fields before your next response. "
+                            "Do not make further tool calls after this one.]"
+                        )
+                        result = result + warning
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
