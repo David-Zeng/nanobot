@@ -59,6 +59,7 @@ class HeartbeatService:
         on_notify: Callable[[str], Coroutine[Any, Any, None]] | None = None,
         interval_s: int = 30 * 60,
         enabled: bool = True,
+        timezone: str | None = None,
     ):
         self.workspace = workspace
         self.provider = provider
@@ -67,6 +68,7 @@ class HeartbeatService:
         self.on_notify = on_notify
         self.interval_s = interval_s
         self.enabled = enabled
+        self.timezone = timezone
         self._running = False
         self._task: asyncio.Task | None = None
         self._tick_lock = asyncio.Lock()
@@ -88,10 +90,13 @@ class HeartbeatService:
 
         Returns (action, tasks) where action is 'skip' or 'run'.
         """
+        from nanobot.utils.helpers import current_time_str
+
         response = await self.provider.chat_with_retry(
             messages=[
                 {"role": "system", "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision."},
                 {"role": "user", "content": (
+                    f"Current Time: {current_time_str(self.timezone)}\n\n"
                     "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
                     f"{content}"
                 )},
@@ -148,6 +153,9 @@ class HeartbeatService:
 
     async def _tick_inner(self) -> None:
         """Inner tick logic, called under _tick_lock."""
+        from nanobot.utils.evaluator import evaluate_response
+
+
         content = self._read_heartbeat_file()
         if not content:
             logger.debug("Heartbeat: HEARTBEAT.md missing or empty")
@@ -165,9 +173,16 @@ class HeartbeatService:
             logger.info("Heartbeat: tasks found, executing...")
             if self.on_execute:
                 response = await self.on_execute(tasks)
-                if response and self.on_notify:
-                    logger.info("Heartbeat: completed, delivering response")
-                    await self.on_notify(response)
+
+                if response:
+                    should_notify = await evaluate_response(
+                        response, tasks, self.provider, self.model,
+                    )
+                    if should_notify and self.on_notify:
+                        logger.info("Heartbeat: completed, delivering response")
+                        await self.on_notify(response)
+                    else:
+                        logger.info("Heartbeat: silenced by post-run evaluation")
         except Exception:
             logger.exception("Heartbeat execution failed")
 
