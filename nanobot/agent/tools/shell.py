@@ -3,12 +3,14 @@
 import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
+from nanobot.config.paths import get_media_dir
 
 
 class ExecTool(Tool):
@@ -50,6 +52,10 @@ class ExecTool(Tool):
     @property
     def description(self) -> str:
         return "Execute a shell command and return its output. Use with caution."
+
+    @property
+    def exclusive(self) -> bool:
+        return True
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -113,10 +119,11 @@ class ExecTool(Tool):
                 except asyncio.TimeoutError:
                     pass
                 finally:
-                    try:
-                        os.waitpid(process.pid, os.WNOHANG)
-                    except (ProcessLookupError, ChildProcessError) as e:
-                        logger.debug("Process already reaped or not found: {}", e)
+                    if sys.platform != "win32":
+                        try:
+                            os.waitpid(process.pid, os.WNOHANG)
+                        except (ProcessLookupError, ChildProcessError) as e:
+                            logger.debug("Process already reaped or not found: {}", e)
                 return f"Error: Command timed out after {effective_timeout} seconds"
 
             output_parts = []
@@ -177,14 +184,23 @@ class ExecTool(Tool):
                     p = Path(expanded).expanduser().resolve()
                 except Exception:
                     continue
-                if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
+
+                media_path = get_media_dir().resolve()
+                if (p.is_absolute() 
+                    and cwd_path not in p.parents 
+                    and p != cwd_path
+                    and media_path not in p.parents
+                    and p != media_path
+                ):
                     return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None
 
     @staticmethod
     def _extract_absolute_paths(command: str) -> list[str]:
-        win_paths = re.findall(r"[A-Za-z]:\\[^\s\"'|><;]+", command)   # Windows: C:\...
+        # Windows: match drive-root paths like `C:\` as well as `C:\path\to\file`
+        # NOTE: `*` is required so `C:\` (nothing after the slash) is still extracted.
+        win_paths = re.findall(r"[A-Za-z]:\\[^\s\"'|><;]*", command)
         posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command) # POSIX: /absolute only
         home_paths = re.findall(r"(?:^|[\s|>'\"])(~[^\s\"'>;|<]*)", command) # POSIX/Windows home shortcut: ~
         return win_paths + posix_paths + home_paths
