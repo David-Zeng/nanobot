@@ -114,7 +114,7 @@ fi
 # This compiles Python dependencies defined in pyproject.toml.
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}Building nanobot Docker image...${NC}"
-docker build -t nanobot .
+docker build --no-cache -t nanobot .
 
 # ------------------------------------------------------------------------------
 # STEP 3: Configuration Setup
@@ -129,7 +129,7 @@ if [ ! -f "$CONFIG_DIR/config.json" ]; then
     echo -e "${YELLOW}Config not found. Initializing...${NC}"
 
     # Run 'onboard' command inside a temporary container to generate default config
-    docker run --rm -v "$CONFIG_DIR:/root/.nanobot" nanobot onboard
+    docker run --rm -v "$CONFIG_DIR:/home/nanobot/.nanobot" nanobot onboard
 
     # Pause to let the user add their API keys manually
     echo -e "${YELLOW}IMPORTANT: Please edit $CONFIG_DIR/config.json to add your API keys.${NC}"
@@ -166,7 +166,7 @@ docker run -d \
   --name nanobot \
   --restart always \
   -p 18790:18790 \
-  -v "$CONFIG_DIR:/root/.nanobot" \
+  -v "$CONFIG_DIR:/home/nanobot/.nanobot" \
   nanobot gateway
 
 # ------------------------------------------------------------------------------
