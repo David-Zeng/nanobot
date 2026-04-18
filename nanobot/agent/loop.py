@@ -191,7 +191,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
-        self.disabled_tools: set[str] = set(disabled_tools or [])
+        self.disabled_tools: set[str] = set(disabled_tools or []) | set(_tc.disabled)
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
