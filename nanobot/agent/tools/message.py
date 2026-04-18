@@ -92,6 +92,17 @@ class MessageTool(Tool):
         if not self._send_callback:
             return "Error: Message sending not configured"
 
+        if (
+            self._sent_in_turn
+            and channel == self._default_channel
+            and chat_id == self._default_chat_id
+        ):
+            return (
+                "Error: message() already sent this turn to the same target. "
+                "Send exactly one message per turn — combine all content into a "
+                "single message() call. This second send was suppressed."
+            )
+
         msg = OutboundMessage(
             channel=channel,
             chat_id=chat_id,

@@ -167,3 +167,42 @@ class TestMessageToolTurnTracking:
         tool._sent_in_turn = True
         tool.start_turn()
         assert not tool._sent_in_turn
+
+    @pytest.mark.asyncio
+    async def test_second_send_to_same_target_suppressed(self) -> None:
+        tool = MessageTool()
+        tool.set_context("telegram", "chat123")
+        sent: list[OutboundMessage] = []
+        tool.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
+
+        first = await tool.execute(content="Hello")
+        second = await tool.execute(content="Hi again")
+
+        assert len(sent) == 1
+        assert "Message sent" in first
+        assert "already sent this turn" in second
+
+    @pytest.mark.asyncio
+    async def test_second_send_to_different_target_allowed(self) -> None:
+        tool = MessageTool()
+        tool.set_context("telegram", "chat123")
+        sent: list[OutboundMessage] = []
+        tool.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
+
+        await tool.execute(content="Hello")
+        await tool.execute(content="Other chat", channel="telegram", chat_id="chat999")
+
+        assert len(sent) == 2
+
+    @pytest.mark.asyncio
+    async def test_start_turn_allows_new_send(self) -> None:
+        tool = MessageTool()
+        tool.set_context("telegram", "chat123")
+        sent: list[OutboundMessage] = []
+        tool.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
+
+        await tool.execute(content="Turn 1")
+        tool.start_turn()
+        await tool.execute(content="Turn 2")
+
+        assert len(sent) == 2
