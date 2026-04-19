@@ -463,6 +463,8 @@ class AgentLoop:
             injection_callback=_drain_pending,
         ))
         self._last_usage = result.usage
+        if result.final_content:
+            result.final_content = ContextBuilder.strip_runtime_context(result.final_content)
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             # Push final content through stream so streaming channels (e.g. Feishu)

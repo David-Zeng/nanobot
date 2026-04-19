@@ -3,6 +3,7 @@
 import base64
 import mimetypes
 import platform
+import re
 from importlib.resources import files as pkg_files
 from pathlib import Path
 from typing import Any
@@ -88,6 +89,28 @@ class ContextBuilder:
         if session_summary:
             lines += ["", "[Resumed Session]", session_summary]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines) + "\n" + ContextBuilder._RUNTIME_CONTEXT_END
+
+    @classmethod
+    def strip_runtime_context(cls, text: str) -> str:
+        """Sanitise LLM-produced text before it is delivered to a user.
+
+        If *text* starts with the runtime-context tag, the model has parroted
+        the input prompt verbatim — treat the whole thing as a malfunction and
+        return "" so callers can reject it outright. Otherwise remove any
+        embedded [Runtime Context ...] ... [/Runtime Context] blocks (and
+        unterminated openers) and return what's left.
+        """
+        if not text:
+            return text
+        if text.lstrip().startswith(cls._RUNTIME_CONTEXT_TAG):
+            return ""
+        if cls._RUNTIME_CONTEXT_TAG not in text:
+            return text
+        pattern = re.escape(cls._RUNTIME_CONTEXT_TAG) + r".*?" + re.escape(cls._RUNTIME_CONTEXT_END)
+        cleaned = re.sub(pattern, "", text, flags=re.DOTALL)
+        if cls._RUNTIME_CONTEXT_TAG in cleaned:
+            cleaned = cleaned.split(cls._RUNTIME_CONTEXT_TAG, 1)[0]
+        return cleaned.strip("\n")
 
     @staticmethod
     def _merge_message_content(left: Any, right: Any) -> str | list[dict[str, Any]]:

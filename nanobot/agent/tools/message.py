@@ -71,9 +71,22 @@ class MessageTool(Tool):
         media: list[str] | None = None,
         **kwargs: Any
     ) -> str:
+        from nanobot.agent.context import ContextBuilder
         from nanobot.utils.helpers import strip_think
         content = strip_think(content)
-        
+        sanitised = ContextBuilder.strip_runtime_context(content)
+        if not sanitised.strip():
+            # Model parroted the runtime-context / input prompt instead of
+            # composing a real reply. Reject without tripping the per-turn
+            # guard so the next iteration can send the real answer.
+            return (
+                "Error: message content was empty after stripping the runtime-context "
+                "prompt — you echoed your input instead of replying. Do not call "
+                "message() with the [Runtime Context …] block or the customer's own "
+                "text. Send a real reply composed in your own words."
+            )
+        content = sanitised
+
         channel = channel or self._default_channel
         chat_id = chat_id or self._default_chat_id
         # Only inherit default message_id when targeting the same channel+chat.
