@@ -287,3 +287,107 @@ async def test_decide_prompt_includes_current_time(tmp_path) -> None:
     assert user_msg["role"] == "user"
     assert "Current Time:" in user_msg["content"]
 
+
+@pytest.mark.asyncio
+async def test_pre_tick_gate_empty_stdout_skips_tick(tmp_path) -> None:
+    """Gate returning empty stdout must skip the tick entirely — no LLM call."""
+    (tmp_path / "HEARTBEAT.md").write_text("- [ ] always here", encoding="utf-8")
+
+    provider = DummyProvider([])
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=provider,
+        model="openai/gpt-4o-mini",
+        pre_tick_check_cmd="true",  # exits 0, empty stdout
+    )
+
+    await service._tick()
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_tick_gate_nonempty_stdout_runs_decide(tmp_path) -> None:
+    """Gate with non-empty stdout must proceed into the decide phase."""
+    (tmp_path / "HEARTBEAT.md").write_text("- [ ] work", encoding="utf-8")
+
+    provider = DummyProvider([
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="hb_1", name="heartbeat",
+                    arguments={"action": "skip"},
+                )
+            ],
+        )
+    ])
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=provider,
+        model="openai/gpt-4o-mini",
+        pre_tick_check_cmd="echo has-work",
+    )
+
+    await service._tick()
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_tick_gate_nonzero_exit_skips(tmp_path) -> None:
+    """Gate exiting non-zero means skip (treated as failure, not signal)."""
+    (tmp_path / "HEARTBEAT.md").write_text("- [ ] work", encoding="utf-8")
+
+    provider = DummyProvider([])
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=provider,
+        model="openai/gpt-4o-mini",
+        pre_tick_check_cmd="echo stuff && exit 1",
+    )
+
+    await service._tick()
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_tick_gate_timeout_skips(tmp_path) -> None:
+    """Gate exceeding timeout must skip cleanly."""
+    (tmp_path / "HEARTBEAT.md").write_text("- [ ] work", encoding="utf-8")
+
+    provider = DummyProvider([])
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=provider,
+        model="openai/gpt-4o-mini",
+        pre_tick_check_cmd="sleep 5",
+        pre_tick_check_timeout_s=0.1,
+    )
+
+    await service._tick()
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_tick_gate_absent_preserves_existing_behaviour(tmp_path) -> None:
+    """With no gate configured, tick behaves as before (reaches decide)."""
+    (tmp_path / "HEARTBEAT.md").write_text("- [ ] work", encoding="utf-8")
+
+    provider = DummyProvider([
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="hb_1", name="heartbeat",
+                    arguments={"action": "skip"},
+                )
+            ],
+        )
+    ])
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=provider,
+        model="openai/gpt-4o-mini",
+    )
+
+    await service._tick()
+    assert provider.calls == 1

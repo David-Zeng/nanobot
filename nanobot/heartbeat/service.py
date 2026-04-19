@@ -60,6 +60,8 @@ class HeartbeatService:
         interval_s: int = 30 * 60,
         enabled: bool = True,
         timezone: str | None = None,
+        pre_tick_check_cmd: str = "",
+        pre_tick_check_timeout_s: float = 10.0,
     ):
         self.workspace = workspace
         self.provider = provider
@@ -69,9 +71,44 @@ class HeartbeatService:
         self.interval_s = interval_s
         self.enabled = enabled
         self.timezone = timezone
+        self.pre_tick_check_cmd = pre_tick_check_cmd
+        self.pre_tick_check_timeout_s = pre_tick_check_timeout_s
         self._running = False
         self._task: asyncio.Task | None = None
         self._tick_lock = asyncio.Lock()
+
+    async def _pre_tick_has_work(self) -> bool:
+        """Run the configured shell gate. True → run tick; False → skip.
+
+        Empty stdout, non-zero exit, or timeout all mean skip. The command
+        is deployer-configured (config file), never user input from chat.
+        """
+        if not self.pre_tick_check_cmd:
+            return True
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "/bin/sh", "-c", self.pre_tick_check_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=self.pre_tick_check_timeout_s,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                logger.warning("Heartbeat pre-tick check timed out; skipping")
+                return False
+            if proc.returncode != 0:
+                logger.warning(
+                    "Heartbeat pre-tick check exit={} stderr={!r}; skipping",
+                    proc.returncode, (stderr or b"").decode("utf-8", errors="replace")[:200],
+                )
+                return False
+            return bool(stdout.strip())
+        except Exception as e:
+            logger.warning("Heartbeat pre-tick check errored: {}; skipping", e)
+            return False
 
     @property
     def heartbeat_file(self) -> Path:
@@ -166,6 +203,10 @@ class HeartbeatService:
             logger.debug("Heartbeat: HEARTBEAT.md missing or empty")
             return
 
+        if not await self._pre_tick_has_work():
+            logger.info("Heartbeat: no work (pre-tick gate), skipping")
+            return
+
         logger.info("Heartbeat: checking for tasks...")
 
         try:
@@ -195,6 +236,8 @@ class HeartbeatService:
         """Manually trigger a heartbeat."""
         content = self._read_heartbeat_file()
         if not content:
+            return None
+        if not await self._pre_tick_has_work():
             return None
         action, tasks = await self._decide(content)
         if action != "run" or not self.on_execute:

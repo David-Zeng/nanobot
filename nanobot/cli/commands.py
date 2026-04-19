@@ -810,6 +810,8 @@ def gateway(
         interval_s=hb_cfg.interval_s,
         enabled=hb_cfg.enabled,
         timezone=config.agents.defaults.timezone,
+        pre_tick_check_cmd=hb_cfg.pre_tick_check_cmd,
+        pre_tick_check_timeout_s=hb_cfg.pre_tick_check_timeout_s,
     )
 
     if channels.enabled_channels:

@@ -346,6 +346,12 @@ class HeartbeatConfig(Base):
     enabled: bool = True
     interval_s: int = 30 * 60  # 30 minutes
     keep_recent_messages: int = 8
+    # Optional shell command run BEFORE the LLM decide call. If set, the tick
+    # proceeds only when the command exits 0 with non-empty stdout. Intended
+    # for fast SQL/filesystem triage that avoids paying for an LLM round-trip
+    # on idle ticks. Empty stdout → skip; non-zero exit or timeout → skip.
+    pre_tick_check_cmd: str = ""
+    pre_tick_check_timeout_s: float = 10.0
 
 
 class ApiConfig(Base):
