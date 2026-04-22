@@ -71,6 +71,7 @@ class AgentRunSpec:
     context_block_limit: int | None = None
     provider_retry_mode: str = "standard"
     progress_callback: Any | None = None
+    retry_wait_callback: Any | None = None
     checkpoint_callback: Any | None = None
     injection_callback: Any | None = None
 
@@ -273,7 +274,7 @@ class AgentRunner:
             context.tool_calls = list(response.tool_calls)
             self._accumulate_usage(usage, raw_usage)
 
-            if response.has_tool_calls:
+            if response.should_execute_tools:
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
 
@@ -361,6 +362,13 @@ class AgentRunner:
                     had_injections = True
                 await hook.after_iteration(context)
                 continue
+
+            if response.has_tool_calls:
+                logger.warning(
+                    "Ignoring tool calls under finish_reason='{}' for {}",
+                    response.finish_reason,
+                    spec.session_key or "default",
+                )
 
             clean = hook.finalize_content(context, response.content)
             if response.finish_reason != "error" and is_blank_text(clean):
@@ -545,7 +553,7 @@ class AgentRunner:
             "tools": tools,
             "model": spec.model,
             "retry_mode": spec.provider_retry_mode,
-            "on_retry_wait": spec.progress_callback,
+            "on_retry_wait": spec.retry_wait_callback,
         }
         if spec.temperature is not None:
             kwargs["temperature"] = spec.temperature

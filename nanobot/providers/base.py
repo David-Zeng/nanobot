@@ -67,6 +67,14 @@ class LLMResponse:
         """Check if response contains tool calls."""
         return len(self.tool_calls) > 0
 
+    @property
+    def should_execute_tools(self) -> bool:
+        """Tools execute only when has_tool_calls AND finish_reason is ``tool_calls`` / ``stop``.
+        Blocks gateway-injected calls under ``refusal`` / ``content_filter`` / ``error`` (#3220)."""
+        if not self.has_tool_calls:
+            return False
+        return self.finish_reason in ("tool_calls", "stop")
+
 
 @dataclass(frozen=True)
 class GenerationSettings:
@@ -100,6 +108,7 @@ class LLMProvider(ABC):
         "connection",
         "server error",
         "temporarily unavailable",
+        "速率限制",
     )
     _RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
     _TRANSIENT_ERROR_KINDS = frozenset({"timeout", "connection"})
@@ -146,6 +155,7 @@ class LLMProvider(ABC):
         "temporarily unavailable",
         "overloaded",
         "concurrency limit",
+        "速率限制",
     )
 
     _SENTINEL = object()
