@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +52,7 @@ class ExecTool(Tool):
         self.timeout = timeout
         self.working_dir = working_dir
         self.sandbox = sandbox
-        self.deny_patterns = deny_patterns or [
+        self.deny_patterns = (deny_patterns or []) + [
             r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
             r"\bdel\s+/[fq]\b",              # del /f, del /q
             r"\brmdir\s+/s\b",               # rmdir /s
@@ -136,9 +137,10 @@ class ExecTool(Tool):
 
         if self.path_append:
             if _IS_WINDOWS:
-                env["PATH"] = env.get("PATH", "") + ";" + self.path_append
+                env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
             else:
-                command = f'export PATH="$PATH:{self.path_append}"; {command}'
+                env["NANOBOT_PATH_APPEND"] = self.path_append
+                command = f'export PATH="$PATH{os.pathsep}$NANOBOT_PATH_APPEND"; {command}'
 
         try:
             process = await self._spawn(command, cwd, env)
@@ -211,9 +213,8 @@ class ExecTool(Tool):
         """Kill a subprocess and reap it to prevent zombies."""
         process.kill()
         try:
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            pass
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=5.0)
         finally:
             if not _IS_WINDOWS:
                 try:
@@ -272,13 +273,19 @@ class ExecTool(Tool):
         cmd = command.strip()
         lower = cmd.lower()
 
-        for pattern in self.deny_patterns:
-            if re.search(pattern, lower):
-                return "Error: Command blocked by safety guard (dangerous pattern detected)"
+        # allow_patterns take priority over deny_patterns so that users can
+        # exempt specific commands (e.g. "rm -rf" inside a build directory)
+        # from the hardcoded deny list via configuration.
+        explicitly_allowed = bool(self.allow_patterns) and any(
+            re.search(p, lower) for p in self.allow_patterns
+        )
+        if not explicitly_allowed:
+            for pattern in self.deny_patterns:
+                if re.search(pattern, lower):
+                    return "Error: Command blocked by deny pattern filter"
 
-        if self.allow_patterns:
-            if not any(re.search(p, lower) for p in self.allow_patterns):
-                return "Error: Command blocked by safety guard (not in allowlist)"
+            if self.allow_patterns:
+                return "Error: Command blocked by allowlist filter (not in allowlist)"
 
         from nanobot.security.network import contains_internal_url
         if contains_internal_url(cmd):
@@ -298,8 +305,8 @@ class ExecTool(Tool):
                     continue
 
                 media_path = get_media_dir().resolve()
-                if (p.is_absolute() 
-                    and cwd_path not in p.parents 
+                if (p.is_absolute()
+                    and cwd_path not in p.parents
                     and p != cwd_path
                     and media_path not in p.parents
                     and p != media_path
