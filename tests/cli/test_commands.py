@@ -12,6 +12,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.cli.commands import _make_provider, app
 from nanobot.config.schema import Config
 from nanobot.cron.types import CronJob, CronPayload
+from nanobot.providers.factory import ProviderSnapshot
 from nanobot.providers.openai_codex_provider import _strip_model_prefix
 from nanobot.providers.registry import find_by_name
 
@@ -219,6 +220,89 @@ def test_config_dump_excludes_oauth_provider_blocks():
     assert "githubCopilot" not in providers
 
 
+def test_provider_logout_openai_codex_removes_local_oauth_files(tmp_path, monkeypatch):
+    token_path = tmp_path / "auth" / "codex.json"
+    lock_path = token_path.with_suffix(".lock")
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text("{}", encoding="utf-8")
+    lock_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("OAUTH_CLI_KIT_TOKEN_PATH", str(token_path))
+
+    result = runner.invoke(app, ["provider", "logout", "openai-codex"])
+
+    assert result.exit_code == 0
+    assert not token_path.exists()
+    assert not lock_path.exists()
+    assert "Logged out from OpenAI Codex" in result.stdout
+
+
+def test_provider_logout_openai_codex_succeeds_when_no_local_oauth_file(monkeypatch, tmp_path):
+    token_path = tmp_path / "auth" / "codex.json"
+    monkeypatch.setenv("OAUTH_CLI_KIT_TOKEN_PATH", str(token_path))
+
+    result = runner.invoke(app, ["provider", "logout", "openai-codex"])
+
+    assert result.exit_code == 0
+    assert "No local OAuth credentials found for OpenAI Codex" in result.stdout
+
+
+def test_provider_logout_github_copilot_removes_local_oauth_files(tmp_path, monkeypatch):
+    token_path = tmp_path / "auth" / "github-copilot.json"
+    lock_path = token_path.with_suffix(".lock")
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text("{}", encoding="utf-8")
+    lock_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("OAUTH_CLI_KIT_TOKEN_PATH", str(token_path))
+
+    result = runner.invoke(app, ["provider", "logout", "github-copilot"])
+
+    assert result.exit_code == 0
+    assert not token_path.exists()
+    assert not lock_path.exists()
+    assert "Logged out from GitHub Copilot" in result.stdout
+
+
+def test_provider_logout_github_copilot_succeeds_when_no_local_oauth_file(monkeypatch, tmp_path):
+    token_path = tmp_path / "auth" / "github-copilot.json"
+    monkeypatch.setenv("OAUTH_CLI_KIT_TOKEN_PATH", str(token_path))
+
+    result = runner.invoke(app, ["provider", "logout", "github-copilot"])
+
+    assert result.exit_code == 0
+    assert "No local OAuth credentials found for GitHub Copilot" in result.stdout
+
+
+def test_provider_logout_rejects_unknown_provider():
+    result = runner.invoke(app, ["provider", "logout", "not-a-real-provider"])
+
+    assert result.exit_code == 1
+    assert "Unknown OAuth provider" in result.stdout
+
+
+def test_provider_logout_paths_resolve_to_expected_files():
+    from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+    from oauth_cli_kit.storage import FileTokenStorage
+
+    from nanobot.providers.github_copilot_provider import get_storage
+
+    codex_storage = FileTokenStorage(token_filename=OPENAI_CODEX_PROVIDER.token_filename)
+    codex_path = codex_storage.get_token_path()
+    assert codex_path.name == "codex.json"
+    assert codex_path.parent.name == "auth"
+
+    gh_storage = get_storage()
+    gh_path = gh_storage.get_token_path()
+    assert gh_path.name == "github-copilot.json"
+    assert gh_path.parent.name == "auth"
+
+
+def test_provider_login_rejects_unknown_provider():
+    result = runner.invoke(app, ["provider", "login", "not-a-real-provider"])
+
+    assert result.exit_code == 1
+    assert "Unknown OAuth provider" in result.stdout
+
+
 def test_config_matches_explicit_ollama_prefix_without_api_key():
     config = Config()
     config.agents.defaults.model = "ollama/llama3.2"
@@ -284,6 +368,40 @@ def test_find_by_name_accepts_camel_case_and_hyphen_aliases():
     assert find_by_name("volcengineCodingPlan").name == "volcengine_coding_plan"
     assert find_by_name("github-copilot") is not None
     assert find_by_name("github-copilot").name == "github_copilot"
+    assert find_by_name("longcat") is not None
+    assert find_by_name("longcat").name == "longcat"
+
+
+def test_config_explicit_longcat_provider_resolves_provider_name():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "longcat",
+                    "model": "LongCat-Flash-Chat",
+                }
+            },
+            "providers": {
+                "longcat": {
+                    "apiKey": "test-key",
+                }
+            },
+        }
+    )
+
+    assert config.get_provider_name() == "longcat"
+    assert config.get_api_base() == "https://api.longcat.chat/openai/v1"
+
+
+def test_config_auto_detects_longcat_from_model_keyword():
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "auto", "model": "longcat/LongCat-Flash-Chat"}},
+            "providers": {"longcat": {"apiKey": "test-key"}},
+        }
+    )
+
+    assert config.get_provider_name() == "longcat"
 
 
 def test_config_explicit_xiaomi_mimo_provider_uses_default_api_base():
@@ -776,6 +894,15 @@ def _stop_gateway_provider(_config) -> object:
     raise _StopGatewayError("stop")
 
 
+def _test_provider_snapshot(provider: object, config: Config) -> ProviderSnapshot:
+    return ProviderSnapshot(
+        provider=provider,
+        model=config.agents.defaults.model,
+        context_window_tokens=config.agents.defaults.context_window_tokens,
+        signature=("test",),
+    )
+
+
 def _patch_cli_command_runtime(
     monkeypatch,
     config: Config,
@@ -788,6 +915,8 @@ def _patch_cli_command_runtime(
     cron_service=None,
     get_cron_dir=None,
 ) -> None:
+    provider_factory = make_provider or (lambda _config: object())
+
     monkeypatch.setattr(
         "nanobot.config.loader.set_config_path",
         set_config_path or (lambda _path: None),
@@ -800,7 +929,15 @@ def _patch_cli_command_runtime(
     )
     monkeypatch.setattr(
         "nanobot.cli.commands._make_provider",
-        make_provider or (lambda _config: object()),
+        provider_factory,
+    )
+    monkeypatch.setattr(
+        "nanobot.providers.factory.build_provider_snapshot",
+        lambda _config: _test_provider_snapshot(provider_factory(_config), _config),
+    )
+    monkeypatch.setattr(
+        "nanobot.providers.factory.load_provider_snapshot",
+        lambda _config_path=None: _test_provider_snapshot(provider_factory(config), config),
     )
 
     if message_bus is not None:
@@ -941,8 +1078,36 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
     monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path=None: config)
     monkeypatch.setattr("nanobot.cli.commands.sync_workspace_templates", lambda _path: None)
     monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _config: provider)
+    monkeypatch.setattr(
+        "nanobot.providers.factory.build_provider_snapshot",
+        lambda _config: _test_provider_snapshot(provider, _config),
+    )
+    monkeypatch.setattr(
+        "nanobot.providers.factory.load_provider_snapshot",
+        lambda _config_path=None: _test_provider_snapshot(provider, config),
+    )
     monkeypatch.setattr("nanobot.bus.queue.MessageBus", lambda: bus)
-    monkeypatch.setattr("nanobot.session.manager.SessionManager", lambda _workspace: object())
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.messages = []
+
+        def add_message(self, role: str, content: str, **kwargs) -> None:
+            self.messages.append({"role": role, "content": content, **kwargs})
+
+    class _FakeSessionManager:
+        def __init__(self, _workspace: Path) -> None:
+            self.session = _FakeSession()
+            seen["session_manager"] = self
+
+        def get_or_create(self, key: str) -> _FakeSession:
+            seen["session_key"] = key
+            return self.session
+
+        def save(self, session: _FakeSession) -> None:
+            seen["saved_session"] = session
+
+    monkeypatch.setattr("nanobot.session.manager.SessionManager", _FakeSessionManager)
 
     class _FakeCron:
         def __init__(self, _store_path: Path) -> None:
@@ -1019,9 +1184,11 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
     assert seen["provider"] is provider
     assert seen["model"] == "test-model"
     assert seen["task_context"] == (
-        "[Scheduled Task] Timer finished.\n\n"
-        "Task 'stretch' has been triggered.\n"
-        "Scheduled instruction: Remind me to stretch."
+        "The scheduled time has arrived. Deliver this reminder to the user now, "
+        "as a brief and natural message in their language. Speak directly to them — "
+        "do not narrate progress, summarize, include user IDs, or add status reports "
+        "like 'Done' or 'Reminded'.\n\n"
+        "Reminder: Remind me to stretch."
     )
     bus.publish_outbound.assert_awaited_once_with(
         OutboundMessage(
@@ -1030,6 +1197,16 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
             content="Time to stretch.",
         )
     )
+    assert seen["session_key"] == "telegram:user-1"
+    saved_session = seen["saved_session"]
+    assert isinstance(saved_session, _FakeSession)
+    assert saved_session.messages == [
+        {
+            "role": "assistant",
+            "content": "Time to stretch.",
+            "_channel_delivery": True,
+        }
+    ]
 
 
 def test_gateway_cron_job_suppresses_intermediate_progress(
@@ -1052,6 +1229,14 @@ def test_gateway_cron_job_suppresses_intermediate_progress(
     monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path=None: config)
     monkeypatch.setattr("nanobot.cli.commands.sync_workspace_templates", lambda _path: None)
     monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _config: object())
+    monkeypatch.setattr(
+        "nanobot.providers.factory.build_provider_snapshot",
+        lambda _config: _test_provider_snapshot(object(), _config),
+    )
+    monkeypatch.setattr(
+        "nanobot.providers.factory.load_provider_snapshot",
+        lambda _config_path=None: _test_provider_snapshot(object(), config),
+    )
     monkeypatch.setattr("nanobot.bus.queue.MessageBus", lambda: bus)
     monkeypatch.setattr("nanobot.session.manager.SessionManager", lambda _workspace: object())
 
