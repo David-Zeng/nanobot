@@ -298,6 +298,28 @@ If nanobot gets killed by the kernel:
    docker logs nanobot
    ```
 
+### Channels silent after upgrade (DNS / no network)
+
+**Symptom:** Container is running and port 18790 is bound, but Telegram/WhatsApp
+never connect. Logs show `Temporary failure in name resolution` or
+`httpx.ConnectError: [Errno -3]`.
+
+**Cause:** `docker compose up` failed to bind the port (old container still held it),
+so it created the new container with no Docker network attached — DNS doesn't work.
+
+**Fix:**
+```bash
+docker rm -f nanobot-gateway          # remove the broken container
+docker compose up -d nanobot-gateway  # recreate cleanly with network
+docker logs nanobot-gateway 2>&1 | grep -iE "telegram|connected|error"
+```
+
+To confirm the container has a network before investigating further:
+```bash
+docker inspect nanobot --format '{{json .NetworkSettings.Networks}}'
+# Should show "nanobot_default", not "{}"
+```
+
 ### Channel Connection Issues
 
 1. **Check channel status:**
@@ -311,7 +333,33 @@ If nanobot gets killed by the kernel:
 
 ## Upgrading
 
-### Docker
+### RPi with docker compose (nanobot-rpi branch)
+
+```bash
+# On RPI: merge upstream changes and rebuild
+cd ~/git_repo/nanobot
+git fetch origin && git merge origin/main
+docker compose build
+
+# Force-remove the old container before recreating
+# (docker compose up will fail with "port already allocated" if the old
+# container still exists, even after docker stop)
+docker rm -f nanobot && docker compose up -d nanobot-gateway
+
+# Verify channels started
+docker logs nanobot-gateway 2>&1 | grep -iE "telegram|whatsapp|error"
+```
+
+> **Why `docker rm -f` instead of just `docker stop`?**
+> If a previous container (e.g. a manually-started `nanobot` container) holds
+> port 18790, `docker compose up` will fail with "port already allocated" and
+> create a new container with **no network attached**. That causes silent DNS
+> failures — Telegram/WhatsApp log `Temporary failure in name resolution` and
+> never connect, even though the container appears to be running.
+> Always `docker rm -f` any old container on that port before running
+> `docker compose up`.
+
+### Docker (standalone)
 
 ```bash
 # Stop and remove old container

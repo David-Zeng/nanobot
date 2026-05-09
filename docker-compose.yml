@@ -14,7 +14,7 @@ x-common-config: &common-config
 
 services:
   nanobot-gateway:
-    container_name: nanobot-gateway
+    container_name: nanobot
     <<: *common-config
     command: ["gateway"]
     restart: unless-stopped
