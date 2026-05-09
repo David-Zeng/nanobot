@@ -13,6 +13,14 @@ ERRMSG
     exit 1
 fi
 
+# Export secrets from config.json as env vars so exec(curl $VAR) can use them
+# without embedding keys in workspace files that are sent to the LLM provider.
+_config="$HOME/.nanobot/config.json"
+if [ -f "$_config" ]; then
+    _brave=$(python3 -c "import json; c=json.load(open('$_config')); print(c.get('tools',{}).get('web',{}).get('search',{}).get('apiKey',''))" 2>/dev/null)
+    [ -n "$_brave" ] && export BRAVE_API_KEY="$_brave"
+fi
+
 # Auto-start WhatsApp bridge if installed and gateway is being started
 if [ "$1" = "gateway" ] && [ -f "$HOME/.nanobot/bridge/dist/index.js" ]; then
     TOKEN_FILE="$HOME/.nanobot/whatsapp-auth/bridge-token"

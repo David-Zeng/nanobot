@@ -2,9 +2,6 @@ x-common-config: &common-config
   build:
     context: .
     dockerfile: Dockerfile
-  env_file:
-    - path: .env
-      required: false
   volumes:
     - ~/.nanobot:/home/nanobot/.nanobot
   cap_drop:
