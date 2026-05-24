@@ -26,6 +26,8 @@ RUN mkdir -p nanobot bridge && touch nanobot/__init__.py && \
 COPY nanobot/ nanobot/
 COPY bridge/ bridge/
 COPY webui/ webui/
+# Build the WebUI before pip install so hatch_build.py finds nanobot/web/dist/index.html
+RUN cd webui && npm install && npm run build
 RUN uv pip install --system --no-cache ".[weixin]"
 
 # Build the WhatsApp bridge
