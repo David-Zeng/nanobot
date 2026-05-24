@@ -26,7 +26,52 @@ Instead of storing secrets directly in `config.json`, you can use `${VAR_NAME}` 
 }
 ```
 
-For **systemd** deployments, use `EnvironmentFile=` in the service unit to load variables from a file that only the deploying user can read:
+Any string value in `config.json` can use `${VAR_NAME}`. Resolution runs once at startup, in memory only — resolved values are never written back to disk, so editing config through `nanobot onboard` or the WebUI preserves the placeholder.
+
+If a referenced variable is unset, nanobot fails fast at startup with `ValueError: Environment variable 'NAME' referenced in config is not set`.
+
+### More examples
+
+**MCP servers** — both stdio `env` and HTTP `headers`:
+
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+      },
+      "remote": {
+        "url": "https://example.com/mcp/",
+        "headers": { "Authorization": "Bearer ${REMOTE_MCP_TOKEN}" }
+      }
+    }
+  }
+}
+```
+
+**Web search providers:**
+
+```json
+{
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "brave",
+        "apiKey": "${BRAVE_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Loading variables at startup
+
+Pick whatever fits your deployment — nanobot only reads `os.environ` at startup, so any mechanism that populates the process environment works.
+
+**systemd** — use `EnvironmentFile=` in the service unit to load variables from a file that only the deploying user can read:
 
 ```ini
 # /etc/systemd/system/nanobot.service (excerpt)
@@ -42,6 +87,35 @@ TELEGRAM_TOKEN=your-token-here
 IMAP_PASSWORD=your-password-here
 ```
 
+**Docker** — pass an env file to the locally built image (one `KEY=VALUE` per line), or use `-e KEY=value`:
+
+```bash
+docker run --rm --env-file=./nanobot.env \
+  -v ~/.nanobot:/home/nanobot/.nanobot \
+  nanobot agent -m "Hello"
+```
+
+**direnv** — drop a `.envrc` in your working directory and run `direnv allow`:
+
+```bash
+# .envrc (auto-loaded by direnv)
+export TELEGRAM_TOKEN=your-token-here
+export ANTHROPIC_API_KEY=...
+```
+
+**Secret managers (1Password, Bitwarden, pass)** — wrap the process so secrets only exist as env vars for the lifetime of the run, never on disk:
+
+```bash
+# 1Password — references in .env.tpl look like `op://Vault/Item/field`
+op run --env-file=.env.tpl -- nanobot agent
+
+# pass (passwordstore.org)
+ANTHROPIC_API_KEY="$(pass show api/anthropic)" nanobot agent
+
+# Bitwarden
+ANTHROPIC_API_KEY="$(bw get password api/anthropic)" nanobot agent
+```
+
 ## Providers
 
 > [!TIP]
@@ -54,12 +128,14 @@ IMAP_PASSWORD=your-password-here
 > - **Alibaba Cloud BaiLian**: If you're using Alibaba Cloud BaiLian's OpenAI-compatible endpoint, set `"apiBase": "https://dashscope.aliyuncs.com/compatible-mode/v1"` in your dashscope provider config.
 > - **Step Fun (Mainland China)**: If your API key is from Step Fun's mainland China platform (stepfun.com), set `"apiBase": "https://api.stepfun.com/v1"` in your stepfun provider config.
 > - **Xiaomi MiMo thinking mode**: MiMo models (e.g. `mimo-v2.5-pro`) default to enabled thinking. Use `agents.defaults.reasoningEffort: "none"` to disable it, or `"low"` / `"medium"` / `"high"` to keep it on. Omitting the field preserves the provider's per-model default.
+> - **Xiaomi MiMo Token Plan**: If you're on MiMo's token plan, set `"apiBase": "https://token-plan-sgp.xiaomimimo.com/v1"` in your xiaomi_mimo provider config.
 
 | Provider | Purpose | Get API Key |
 |----------|---------|-------------|
 | `custom` | Any OpenAI-compatible endpoint | — |
 | `openrouter` | LLM (recommended, access to all models) | [openrouter.ai](https://openrouter.ai) |
 | `huggingface` | LLM (Hugging Face Inference Providers) | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
+| `skywork` | LLM (Skywork / APIFree API gateway) | [apifree.ai](https://www.apifree.ai) |
 | `volcengine` | LLM (VolcEngine, pay-per-use) | [Coding Plan](https://www.volcengine.com/activity/codingplan?utm_campaign=nanobot&utm_content=nanobot&utm_medium=devrel&utm_source=OWO&utm_term=nanobot) · [volcengine.com](https://www.volcengine.com) |
 | `byteplus` | LLM (VolcEngine international, pay-per-use) | [Coding Plan](https://www.byteplus.com/en/activity/codingplan?utm_campaign=nanobot&utm_content=nanobot&utm_medium=devrel&utm_source=OWO&utm_term=nanobot) · [byteplus.com](https://www.byteplus.com) |
 | `anthropic` | LLM (Claude direct) | [console.anthropic.com](https://console.anthropic.com) |
@@ -73,11 +149,13 @@ IMAP_PASSWORD=your-password-here
 | `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
 | `aihubmix` | LLM (API gateway, access to all models) | [aihubmix.com](https://aihubmix.com) |
 | `siliconflow` | LLM (SiliconFlow/硅基流动) | [siliconflow.cn](https://siliconflow.cn) |
+| `novita` | LLM (Novita AI OpenAI-compatible gateway) | [novita.ai](https://novita.ai) |
 | `dashscope` | LLM (Qwen) | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
 | `moonshot` | LLM (Moonshot/Kimi) | [platform.moonshot.cn](https://platform.moonshot.cn) |
 | `zhipu` | LLM (Zhipu GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
 | `mimo` | LLM (MiMo) | [platform.xiaomimimo.com](https://platform.xiaomimimo.com) |
 | `longcat` | LLM (LongCat) | [longcat.chat](https://longcat.chat/platform/docs/zh/) |
+| `ant_ling` | LLM (Ant Ling / 蚂蚁百灵) | [developer.ant-ling.com](https://developer.ant-ling.com/en/docs/api-reference/openai/) |
 | `ollama` | LLM (local, Ollama) | — |
 | `lm_studio` | LLM (local, LM Studio) | — |
 | `atomic_chat` | LLM (local, [Atomic Chat](https://atomic.chat/)) | — |
@@ -88,6 +166,36 @@ IMAP_PASSWORD=your-password-here
 | `openai_codex` | LLM (Codex, OAuth) | `nanobot provider login openai-codex` |
 | `github_copilot` | LLM (GitHub Copilot, OAuth) | `nanobot provider login github-copilot` |
 | `qianfan` | LLM (Baidu Qianfan) | [cloud.baidu.com](https://cloud.baidu.com/doc/qianfan/s/Hmh4suq26) |
+
+<details>
+<summary><b>Skywork / APIFree</b></summary>
+
+Skywork uses APIFree's OpenAI-compatible Agent API endpoint. Configure the provider
+once, then use Skywork model IDs such as `skywork-ai/skyclaw-v1`.
+
+```json
+{
+  "providers": {
+    "skywork": {
+      "apiKey": "${SKYWORK_API_KEY}",
+      "apiBase": "https://api.apifree.ai/agent/v1"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "provider": "skywork",
+      "model": "skywork-ai/skyclaw-v1",
+      "maxTokens": 32768,
+      "contextWindowTokens": 131072
+    }
+  }
+}
+```
+
+You can also reference `${APIFREE_API_KEY}` in `apiKey` if that is how your
+environment names the credential.
+
+</details>
 
 <details>
 <summary><b>AWS Bedrock (Converse API)</b></summary>
@@ -371,6 +479,67 @@ Official model names include `LongCat-Flash-Chat`, `LongCat-Flash-Thinking`,
 </details>
 
 <details>
+<summary><b>Xiaomi MiMo</b></summary>
+
+Xiaomi MiMo models are automatically detected by the `xiaomi_mimo` provider when
+the model name contains `mimo`. The default API base is
+`https://api.xiaomimimo.com/v1`.
+
+> **Token Plan**: If you're using MiMo's token plan, override `apiBase` with the
+> dedicated endpoint:
+>
+> ```json
+> {
+>   "providers": {
+>     "xiaomi_mimo": {
+>       "apiKey": "${XIAOMIMIMO_API_KEY}",
+>       "apiBase": "https://token-plan-sgp.xiaomimimo.com/v1"
+>     }
+>   },
+>   "agents": {
+>     "defaults": {
+>       "model": "xiaomi/mimo-v2.5-pro"
+>     }
+>   }
+> }
+> ```
+>
+> No need to set `provider` explicitly — the model name contains `mimo`, which
+> auto-matches to the `xiaomi_mimo` provider spec. Use an API key from the MiMo
+> token plan console and check the MiMo platform for the latest supported model
+> names.
+
+</details>
+
+<details>
+<summary><b>Ant Ling (OpenAI-compatible)</b></summary>
+
+Ant Ling is available through nanobot's built-in OpenAI-compatible provider flow.
+The default API base points to `https://api.ant-ling.com/v1`, so you usually
+only need to set `apiKey`.
+
+```json
+{
+  "providers": {
+    "antLing": {
+      "apiKey": "${ANT_LING_API_KEY}"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "provider": "ant_ling",
+      "model": "Ling-2.6-flash"
+    }
+  }
+}
+```
+
+Official OpenAI-compatible model names include `Ling-2.6-1T`,
+`Ling-2.6-flash`, `Ling-2.5-1T`, `Ling-1T`, `Ring-2.5-1T`, and `Ring-1T`.
+
+</details>
+
+<details>
 <summary><b>Custom Provider (Any OpenAI-compatible API)</b></summary>
 
 Connects directly to any OpenAI-compatible endpoint — llama.cpp, Together AI, Fireworks, Azure OpenAI, or any self-hosted server. Model name is passed as-is.
@@ -438,6 +607,8 @@ Some OpenAI-compatible gateways expose request-body extensions such as vLLM guid
 
 </details>
 
+<a id="local-providers"></a>
+<a id="ollama-local"></a>
 <details>
 <summary><b>Ollama (local)</b></summary>
 
@@ -503,12 +674,19 @@ ollama run llama3.2
 
 </details>
 
+<a id="atomic-chat-local"></a>
 <details>
 <summary><b>Atomic Chat (local)</b></summary>
 
-[Atomic Chat](https://atomic.chat/) is a local-first desktop app that exposes an **OpenAI-compatible** HTTP API (default `http://localhost:1337/v1`). Start Atomic Chat and enable the local API server, then point nanobot at it.
+[Atomic Chat](https://atomic.chat/) is a local-first desktop app that exposes an **OpenAI-compatible** HTTP API (default `http://localhost:1337/v1`). Use it when you want to run nanobot against a model on your own machine instead of a hosted API provider.
 
-**1. Add to config** (partial — merge into `~/.nanobot/config.json`):
+**1. Start Atomic Chat**
+
+- Install [Atomic Chat](https://atomic.chat/) on your machine.
+- Open Atomic Chat, download a model, and keep the app running. The local API is enabled by default.
+- Copy the model ID exposed by the local API. For example, the model ID for `Qwen 3 32B` might be `qwen3-32b`.
+
+**2. Add to config** (partial — merge into `~/.nanobot/config.json`):
 
 ```json
 {
@@ -521,13 +699,13 @@ ollama run llama3.2
   "agents": {
     "defaults": {
       "provider": "atomic_chat",
-      "model": "your-model-id-from-atomic-chat"
+      "model": "qwen3-32b"
     }
   }
 }
 ```
 
-> **Note:** Set `apiKey` to `null` if your Atomic Chat server does not require a key. If it does, set `apiKey` (or the `ATOMIC_CHAT_API_KEY` environment variable) to the value Atomic Chat expects. The `model` string must match the model id Atomic Chat exposes on its OpenAI-compatible endpoint.
+> **Note:** Replace `qwen3-32b` with the model ID from Atomic Chat. Set `apiKey` to `null` if your Atomic Chat server does not require a key. If it does, set `apiKey` (or the `ATOMIC_CHAT_API_KEY` environment variable) to the value Atomic Chat expects.
 
 > `provider: "auto"` also works when `providers.atomic_chat.apiBase` is configured, but setting `"provider": "atomic_chat"` is the clearest option.
 
@@ -608,6 +786,7 @@ docker run -d \
 > See the [official OVMS docs](https://docs.openvino.ai/2026/model-server/ovms_docs_llm_quickstart.html) for more details.
 </details>
 
+<a id="vllm-local-openai-compatible"></a>
 <details>
 <summary><b>vLLM (local / OpenAI-compatible)</b></summary>
 
@@ -811,7 +990,7 @@ Global settings that apply to all channels. Configure under the `channels` secti
 | `sendToolHints` | `false` | Stream tool-call hints (e.g. `read_file("…")`) |
 | `showReasoning` | `true` | Allow channels to surface model reasoning/thinking content (DeepSeek-R1 `reasoning_content`, Anthropic `thinking_blocks`, inline `<think>` tags). Reasoning flows as a dedicated stream with `_reasoning_delta` / `_reasoning_end` markers — channels override `send_reasoning_delta` / `send_reasoning_end` to render in-place updates. Even with `true`, channels without those overrides stay no-op silently. Currently surfaced on CLI and WebSocket/WebUI (italic shimmer header, auto-collapses after the stream ends); Telegram / Slack / Discord / Feishu / WeChat / Matrix keep the base no-op until their bubble UI is adapted. Independent of `sendProgress`. |
 | `sendMaxRetries` | `3` | Max delivery attempts per outbound message, including the initial send (0-10 configured, minimum 1 actual attempt) |
-| `transcriptionProvider` | `"groq"` | Voice transcription backend: `"groq"` (free tier, default) or `"openai"`. API key is auto-resolved from the matching provider config. |
+| `transcriptionProvider` | `"groq"` | Voice transcription backend: `"groq"` (free tier, default) or `"openai"`. API key and optional `apiBase` are auto-resolved from the matching provider config. Chat-style bases such as `https://api.groq.com/openai/v1` are normalized to the audio transcription endpoint. |
 | `transcriptionLanguage` | `null` | Optional ISO-639-1 language hint for audio transcription, e.g. `"en"`, `"ko"`, `"ja"`. |
 
 `sendProgress` and `sendToolHints` can also be overridden per channel. The
@@ -917,7 +1096,7 @@ By default, web search uses `duckduckgo`, and it works out of the box without an
     "web": {
       "search": {
         "provider": "brave",
-        "apiKey": "BSA..."
+        "apiKey": "${BRAVE_API_KEY}"
       }
     }
   }
@@ -931,7 +1110,7 @@ By default, web search uses `duckduckgo`, and it works out of the box without an
     "web": {
       "search": {
         "provider": "tavily",
-        "apiKey": "tvly-..."
+        "apiKey": "${TAVILY_API_KEY}"
       }
     }
   }
@@ -945,7 +1124,7 @@ By default, web search uses `duckduckgo`, and it works out of the box without an
     "web": {
       "search": {
         "provider": "jina",
-        "apiKey": "jina_..."
+        "apiKey": "${JINA_API_KEY}"
       }
     }
   }
@@ -959,7 +1138,7 @@ By default, web search uses `duckduckgo`, and it works out of the box without an
     "web": {
       "search": {
         "provider": "kagi",
-        "apiKey": "your-kagi-api-key"
+        "apiKey": "${KAGI_API_KEY}"
       }
     }
   }
@@ -973,7 +1152,7 @@ By default, web search uses `duckduckgo`, and it works out of the box without an
     "web": {
       "search": {
         "provider": "olostep",
-        "apiKey": "YOUR_OLOSTEP_API_KEY"
+        "apiKey": "${OLOSTEP_API_KEY}"
       }
     }
   }
@@ -1050,7 +1229,7 @@ If you want to always use the local conversion, you can force it using:
 
 ## Image Generation
 
-Image generation is configured under `tools.imageGeneration` and uses provider credentials from `providers.openrouter` or `providers.aihubmix`.
+Image generation is configured under `tools.imageGeneration` and uses credentials from the selected provider's `providers.<name>` block.
 
 See [Image Generation](./image-generation.md) for WebUI usage, provider examples, artifact storage, and troubleshooting.
 
@@ -1136,11 +1315,14 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 > [!TIP]
 > For production deployments, set `"restrictToWorkspace": true` and `"tools.exec.sandbox": "bwrap"` in your config to sandbox the agent.
 
+For API keys, tokens, and other secrets, see [Environment Variables for Secrets](#environment-variables-for-secrets) — avoid storing them directly in `config.json`.
+
 | Option | Default | Description |
 |--------|---------|-------------|
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `tools.exec.sandbox` | `""` | Sandbox backend for shell commands. Set to `"bwrap"` to wrap exec calls in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox — the process can only see the workspace (read-write) and media directory (read-only); config files and API keys are hidden. Automatically enables `restrictToWorkspace` for file tools. **Linux only** — requires `bwrap` installed (`apt install bubblewrap`; pre-installed in the Docker image). Not available on macOS or Windows (bwrap depends on Linux kernel namespaces). |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
+| `tools.exec.timeout` | `60` | Default hard timeout in seconds for shell commands. Config values may exceed the per-call tool cap; set `0` to disable the hard timeout for trusted long-running commands. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
 | `channels.*.allowFrom` | omitted | Access control per channel. Omit to use pairing-only mode; set `["*"]` to allow everyone; or list specific user IDs. See [Pairing](#pairing) for details. |
 
