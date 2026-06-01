@@ -43,6 +43,32 @@ def test_list_sessions_includes_metadata_title(tmp_path):
     assert rows[0]["title"] == "自动生成标题"
 
 
+def test_list_sessions_hides_generated_think_title(tmp_path):
+    manager = SessionManager(tmp_path)
+    session = manager.get_or_create("websocket:chat-think-title")
+    session.metadata["title"] = "<think> The user said hello and assistant replied"
+    session.add_message("user", "hello")
+    manager.save(session)
+
+    rows = manager.list_sessions()
+
+    assert rows[0]["key"] == "websocket:chat-think-title"
+    assert rows[0]["title"] == ""
+    assert rows[0]["preview"] == "hello"
+
+
+def test_list_sessions_keeps_user_edited_think_title(tmp_path):
+    manager = SessionManager(tmp_path)
+    session = manager.get_or_create("websocket:chat-user-title")
+    session.metadata["title"] = "<think> literally discussed"
+    session.metadata["title_user_edited"] = True
+    manager.save(session)
+
+    rows = manager.list_sessions()
+
+    assert rows[0]["title"] == "<think> literally discussed"
+
+
 def test_list_sessions_includes_user_preview(tmp_path):
     manager = SessionManager(tmp_path)
     session = manager.get_or_create("websocket:chat-preview")
@@ -54,6 +80,20 @@ def test_list_sessions_includes_user_preview(tmp_path):
 
     assert rows[0]["key"] == "websocket:chat-preview"
     assert rows[0]["preview"] == "帮我总结一下 OpenAI 的最新硬件计划"
+
+
+def test_list_sessions_bounds_preview_scan(tmp_path):
+    manager = SessionManager(tmp_path)
+    session = manager.get_or_create("websocket:chat-long-preview")
+    for index in range(220):
+        session.add_message("assistant", f"assistant trace {index}")
+    session.add_message("user", "this should not force a full sidebar scan")
+    manager.save(session)
+
+    rows = manager.list_sessions()
+
+    assert rows[0]["key"] == "websocket:chat-long-preview"
+    assert rows[0]["preview"] == "assistant trace 0"
 
 
 # --- Original regression test (from PR 2075) ---

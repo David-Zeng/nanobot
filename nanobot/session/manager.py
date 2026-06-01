@@ -19,6 +19,7 @@ from nanobot.utils.helpers import (
     find_legal_message_start,
     image_placeholder_text,
     safe_filename,
+    strip_think,
 )
 from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
 
@@ -27,6 +28,8 @@ _MESSAGE_TIME_PREFIX_RE = re.compile(r"^\[Message Time: [^\]]+\]\n?")
 _LOCAL_IMAGE_BREADCRUMB_RE = re.compile(r"^\[image: (?:/|~)[^\]]+\]\s*$")
 _TOOL_CALL_ECHO_RE = re.compile(r'^\s*(?:generate_image|message)\([^)]*\)\s*$')
 _SESSION_PREVIEW_MAX_CHARS = 120
+_SESSION_LIST_PREVIEW_MAX_RECORDS = 200
+_SESSION_LIST_PREVIEW_MAX_CHARS = 1_000_000
 
 
 def _sanitize_assistant_replay_text(content: str) -> str:
@@ -72,6 +75,17 @@ def _message_preview_text(message: dict[str, Any]) -> str:
     if message.get("injected_event") == "subagent_result" and isinstance(content, str):
         content = scrub_subagent_announce_body(content)
     return _text_preview(content)
+
+
+def _metadata_title(metadata: Any) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    title = metadata.get("title")
+    if not isinstance(title, str):
+        return ""
+    if metadata.get("title_user_edited") is True:
+        return title
+    return strip_think(title)
 
 
 @dataclass
@@ -181,6 +195,28 @@ class Session:
                     )
                 if cli_lines:
                     breadcrumbs = "\n".join(cli_lines)
+                    content = f"{content}\n{breadcrumbs}" if content else breadcrumbs
+            mcp_presets = message.get("mcp_presets")
+            if (
+                role == "user"
+                and isinstance(mcp_presets, list)
+                and mcp_presets
+                and isinstance(content, str)
+            ):
+                mcp_lines: list[str] = []
+                for item in mcp_presets[:8]:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "").strip().lower()
+                    if not name:
+                        continue
+                    transport = str(item.get("transport") or "mcp").strip() or "mcp"
+                    mcp_lines.append(
+                        f"[MCP Preset Attachment: @{name}; tool_prefix=mcp_{name}_; "
+                        f"transport={transport}]"
+                    )
+                if mcp_lines:
+                    breadcrumbs = "\n".join(mcp_lines)
                     content = f"{content}\n{breadcrumbs}" if content else breadcrumbs
             if include_timestamps:
                 content = self._annotate_message_time(message, content)
@@ -618,12 +654,21 @@ class SessionManager:
                         if data.get("_type") == "metadata":
                             key = data.get("key") or path.stem.replace("_", ":", 1)
                             metadata = data.get("metadata", {})
-                            title = metadata.get("title") if isinstance(metadata, dict) else None
+                            title = _metadata_title(metadata)
                             preview = ""
                             fallback_preview = ""
+                            scanned_records = 0
+                            scanned_chars = 0
                             for line in f:
                                 if not line.strip():
                                     continue
+                                scanned_records += 1
+                                scanned_chars += len(line)
+                                if (
+                                    scanned_records > _SESSION_LIST_PREVIEW_MAX_RECORDS
+                                    or scanned_chars > _SESSION_LIST_PREVIEW_MAX_CHARS
+                                ):
+                                    break
                                 item = json.loads(line)
                                 if item.get("_type") == "metadata":
                                     continue
@@ -640,7 +685,7 @@ class SessionManager:
                                 "key": key,
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
-                                "title": title if isinstance(title, str) else "",
+                                "title": title,
                                 "preview": preview,
                                 "path": str(path)
                             })
@@ -651,11 +696,7 @@ class SessionManager:
                         "key": repaired.key,
                         "created_at": repaired.created_at.isoformat(),
                         "updated_at": repaired.updated_at.isoformat(),
-                        "title": (
-                            repaired.metadata.get("title")
-                            if isinstance(repaired.metadata.get("title"), str)
-                            else ""
-                        ),
+                        "title": _metadata_title(repaired.metadata),
                         "preview": next(
                             (
                                 text
