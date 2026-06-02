@@ -63,6 +63,7 @@ async def evaluate_response(
                 )},
             ],
             tools=_EVALUATE_TOOL,
+            tool_choice="required",
             model=model,
             max_tokens=256,
             temperature=0.0,
