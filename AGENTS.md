@@ -1,83 +1,82 @@
-# Agent Instructions for nanobot
+This file provides guidance to AI coding agents working with this repository.
 
-This repository contains the source code for **nanobot**, an ultra-lightweight personal AI assistant.
+## Project Overview
 
-## 1. Environment & Build
+nanobot is a lightweight, open-source AI agent framework written in Python with a React/TypeScript WebUI. It centers around a small agent loop that receives messages from chat channels, invokes an LLM provider, executes tools, and manages session memory.
 
-- **Language**: Python 3.11+
-- **Build System**: `hatchling` (configured in `pyproject.toml`)
-- **Package Manager**: `pip` / `uv`
-
-### Common Commands
+## Development Commands
 
 ```bash
-# Install in editable mode with dev dependencies
-pip install -e ".[dev]"
+# Python: run single test / lint
+pytest tests/test_openai_api.py::test_function -v
+ruff check nanobot/
 
-# Run all tests
-pytest
+# WebUI: dev server (proxies API/WS to gateway :8765), build, test
+# Build outputs to ../nanobot/web/dist (bundled into the Python wheel)
+cd webui && bun run dev      # or NANOBOT_API_URL=... bun run dev
+cd webui && bun run build
+cd webui && bun run test
 
-# Run a single test file
-pytest tests/test_file.py
-
-# Run a specific test function
-pytest tests/test_file.py::test_function_name
-
-# Linting (Ruff)
-ruff check .
-
-# Formatting (Ruff)
-ruff format .
+# Gateway
+nanobot gateway
 ```
 
-## 2. Code Style & Conventions
+## High-Level Architecture
 
-### General
-- **Formatting**: Follows `ruff` defaults (similar to Black). Line length is **100** characters.
-- **Indentation**: 4 spaces.
-- **Quotes**: Double quotes `"` for strings.
-- **Async/Await**: The core is built on `asyncio`. Use `async/await` for I/O operations.
+### Core Data Flow
 
-### Type Hinting
-- **Strict Typing**: All function signatures must have type hints.
-- **Collections**: Use `list`, `dict`, `tuple` (generic aliases) or `typing.List`, `typing.Dict` etc.
-- **Optional**: Use `str | None` (Python 3.10+) or `Optional[str]`.
+Messages flow through an async `MessageBus` (`nanobot/bus/queue.py`) that decouples chat channels from the agent core:
 
-### Imports
-Organize imports in three blocks, separated by a blank line:
-1.  **Standard Library**: `import os`, `import asyncio`, `from pathlib import Path`
-2.  **Third-Party**: `import typer`, `from loguru import logger`, `from rich.console import Console`
-3.  **Local (nanobot)**: `from nanobot.config import ...`, `from nanobot.agent import ...`
+1. **Channels** (`nanobot/channels/`) receive messages from external platforms and publish `InboundMessage` events to the bus.
+2. **`AgentLoop`** (`nanobot/agent/loop.py`) consumes inbound messages, builds context, and coordinates the turn.
+3. **`AgentRunner`** (`nanobot/agent/runner.py`) handles the actual LLM conversation loop: send messages to the provider, receive tool calls, execute tools, and stream responses.
+4. Responses are published as `OutboundMessage` events back to the appropriate channel.
 
-### Naming
-- **Variables/Functions**: `snake_case`
-- **Classes**: `PascalCase`
-- **Constants**: `UPPER_CASE`
-- **Private**: `_leading_underscore` for internal methods/variables.
+### Key Subsystems
 
-### Error Handling & Logging
-- **Logging**: Use `loguru`.
-  ```python
-  from loguru import logger
-  logger.info("Message")
-  logger.error(f"Error: {e}")
-  ```
-- **Exceptions**: Use specific exception types. Avoid bare `except:`.
+- **Agent Loop** (`nanobot/agent/loop.py`, `runner.py`): The core processing engine. `AgentLoop` manages session keys, hooks, and context building. `AgentRunner` executes the multi-turn LLM conversation with tool execution.
+- **LLM Providers** (`nanobot/providers/`): Provider implementations (Anthropic, OpenAI-compatible, OpenAI Responses API, Azure, Bedrock, GitHub Copilot, OpenAI Codex, etc.) built on a common base (`base.py`). Includes image generation (`image_generation.py`) and audio transcription (`transcription.py`). `factory.py` and `registry.py` handle instantiation and model discovery.
+- **Channels** (`nanobot/channels/`): Platform integrations (Telegram, Discord, Slack, Feishu, Matrix, WhatsApp, QQ, WeChat, WeCom, DingTalk, Email, MoChat, MS Teams, WebSocket). `manager.py` discovers and coordinates them. Channels are auto-discovered via `pkgutil` scan + entry-point plugins.
+- **Tools** (`nanobot/agent/tools/`): Agent capabilities exposed to the LLM: filesystem (read/write/edit/list), shell execution (with sandbox backends), web search/fetch, MCP servers, cron, notebook editing, subagent spawning, long-running tasks / sustained goals (`long_task.py`), image generation, and self-modification. Tools are auto-discovered via `pkgutil` scan + entry-point plugins.
+- **Memory** (`nanobot/agent/memory.py`): Session history persistence with Dream two-phase memory consolidation. Uses atomic writes with fsync for durability.
+- **Session Management** (`nanobot/session/`): Per-session history, context compaction, TTL-based auto-compaction (`manager.py`), and sustained goal state tracking (`goal_state.py`).
+- **Config** (`nanobot/config/schema.py`, `loader.py`): Pydantic-based configuration loaded from `~/.nanobot/config.json`. Supports camelCase aliases for JSON compatibility.
+- **Bridge** (`bridge/`): TypeScript services (e.g. WhatsApp bridge) bundled into the wheel via `pyproject.toml` `force-include`.
+- **WebUI** (`webui/`): Vite-based React SPA that talks to the gateway over a WebSocket multiplex protocol. The dev server proxies `/api`, `/webui`, `/auth`, and WebSocket traffic to the gateway.
+- **API Server** (`nanobot/api/server.py`): OpenAI-compatible HTTP API (`/v1/chat/completions`, `/v1/models`) for programmatic access.
+- **Command Router** (`nanobot/command/`): Slash command routing and built-in command handlers.
+- **Heartbeat** (`nanobot/templates/HEARTBEAT.md`): Periodic task list checked via `cron` jobs (legacy dedicated service removed).
+- **Pairing** (`nanobot/pairing/`): DM sender approval store with persistent pairing codes per channel.
+- **Skills** (`nanobot/skills/`): Built-in skill definitions (long-goal, cron, github, image-generation, etc.) loaded into agent context.
+- **Security** (`nanobot/security/`): PTH file guard and other security measures activated at CLI entry.
 
-### Documentation
-- **Docstrings**: Use triple double quotes `"""`. Google style or simple description.
-  - Module level docstring at the top of the file.
-  - Function/Class docstrings explaining purpose and args.
+### Entry Points
 
-## 3. Architecture Overview
+- **CLI**: `nanobot/cli/commands.py`
+- **Python SDK**: `nanobot/nanobot.py`
 
-- **Entry Point**: `nanobot/cli/commands.py` (`nanobot` command).
-- **Core Loop**: `nanobot/agent/loop.py` (`AgentLoop` class).
-- **Configuration**: `nanobot/config/` (Pydantic models).
-- **Providers**: `nanobot/providers/` (LLM integrations via `litellm`).
-- **Tools**: `nanobot/agent/tools/` (Agent capabilities).
+## Project-Specific Notes
 
-## 4. Testing
-- Use `pytest` for testing.
-- Tests are located in `tests/`.
-- Use `pytest-asyncio` for async tests.
+- Architecture constraints: [`.agent/design.md`](.agent/design.md)
+- Security boundaries: [`.agent/security.md`](.agent/security.md)
+- Common gotchas: [`.agent/gotchas.md`](.agent/gotchas.md)
+
+## Branching Strategy
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full two-branch model (`main` vs `nightly`) and PR guidelines.
+
+## Code Style
+
+- Python 3.11+, asyncio throughout.
+- Line length: 100.
+- Linting: `ruff` with rules E, F, I, N, W (E501 ignored).
+- pytest with `asyncio_mode = "auto"`.
+
+## Common File Locations
+
+- Config schema: `nanobot/config/schema.py`
+- Provider base / new provider template: `nanobot/providers/base.py`
+- Channel base / new channel template: `nanobot/channels/base.py`
+- Tool registry: `nanobot/agent/tools/registry.py`
+- WebUI dev proxy config: `webui/vite.config.ts`
+- Tests mirror the `nanobot/` package structure.
