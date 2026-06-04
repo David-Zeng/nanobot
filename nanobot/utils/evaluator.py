@@ -65,8 +65,9 @@ async def evaluate_response(
             tools=_EVALUATE_TOOL,
             tool_choice="required",
             model=model,
-            max_tokens=256,
+            max_tokens=1024,
             temperature=0.0,
+            reasoning_effort="none",
         )
 
         if not llm_response.should_execute_tools:
