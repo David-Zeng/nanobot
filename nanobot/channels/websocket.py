@@ -89,6 +89,7 @@ class WebSocketConfig(Base):
     max_message_bytes: int = Field(default=37_748_736, ge=1024, le=41_943_040)
     ping_interval_s: float = Field(default=20.0, ge=5.0, le=300.0)
     ping_timeout_s: float = Field(default=20.0, ge=5.0, le=300.0)
+    open_timeout_s: float = Field(default=300.0, ge=10.0, le=600.0)
     ssl_certfile: str = ""
     ssl_keyfile: str = ""
 
@@ -476,6 +477,7 @@ class WebSocketChannel(BaseChannel):
                     socket_path,
                     process_request=process_request,
                     max_size=self.config.max_message_bytes,
+                    open_timeout=self.config.open_timeout_s,
                     ping_interval=self.config.ping_interval_s,
                     ping_timeout=self.config.ping_timeout_s,
                     logger=ws_logger,
@@ -489,6 +491,7 @@ class WebSocketChannel(BaseChannel):
                     self.config.port,
                     process_request=process_request,
                     max_size=self.config.max_message_bytes,
+                    open_timeout=self.config.open_timeout_s,
                     ping_interval=self.config.ping_interval_s,
                     ping_timeout=self.config.ping_timeout_s,
                     ssl=ssl_context,
