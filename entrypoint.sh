@@ -21,14 +21,4 @@ if [ -f "$_config" ]; then
     [ -n "$_brave" ] && export BRAVE_API_KEY="$_brave"
 fi
 
-# Auto-start WhatsApp bridge if installed and gateway is being started
-if [ "$1" = "gateway" ] && [ -f "$HOME/.nanobot/bridge/dist/index.js" ]; then
-    TOKEN_FILE="$HOME/.nanobot/whatsapp-auth/bridge-token"
-    AUTH_DIR="$HOME/.nanobot/whatsapp-auth"
-    if [ -f "$TOKEN_FILE" ]; then
-        BRIDGE_TOKEN=$(cat "$TOKEN_FILE")
-        BRIDGE_TOKEN="$BRIDGE_TOKEN" AUTH_DIR="$AUTH_DIR" node "$HOME/.nanobot/bridge/dist/index.js" &
-    fi
-fi
-
 exec nanobot "$@"

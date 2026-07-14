@@ -26,6 +26,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes, Messag
 from telegram.request import HTTPXRequest
 
 from nanobot.bus.events import OutboundMessage
+from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.command.builtin import build_help_text
@@ -36,7 +37,7 @@ from nanobot.utils.helpers import split_message
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 # Telegram's actual API limit is 4096; we split raw markdown at 4000 as a
-# safety margin for mid-stream edits (plain text).  For _stream_end, we split
+# safety margin for mid-stream edits (plain text).  On stream end, we split
 # raw markdown into chunks whose rendered HTML fits Telegram's true 4096-char
 # boundary so the final rendered message never overflows.
 TELEGRAM_HTML_MAX_LEN = 4096
@@ -285,15 +286,17 @@ def _markdown_to_telegram_html(text: str) -> str:
     return text
 
 
-def _split_telegram_markdown_html(content: str, max_html_len: int) -> list[str]:
-    """Split raw Telegram Markdown and return HTML chunks within Telegram's limit."""
-    chunks: list[str] = []
+def _split_telegram_markdown_html_chunks(
+    content: str, max_html_len: int,
+) -> list[tuple[str, str]]:
+    """Return raw Markdown and rendered HTML chunk pairs within Telegram's limit."""
+    chunks: list[tuple[str, str]] = []
     pending = _split_telegram_markdown(content, TELEGRAM_MAX_MESSAGE_LEN)
     while pending:
         chunk = pending.pop(0)
         html = _markdown_to_telegram_html(chunk)
         if len(html) <= max_html_len:
-            chunks.append(html)
+            chunks.append((chunk, html))
             continue
 
         # Markdown can expand when rendered as HTML (tags/entities). Re-split
@@ -301,14 +304,17 @@ def _split_telegram_markdown_html(content: str, max_html_len: int) -> list[str]:
         next_limit = max(1, int(len(chunk) * max_html_len / len(html)) - 8)
         next_limit = min(next_limit, len(chunk) - 1)
         if next_limit <= 0:
-            chunks.extend(split_message(html, max_html_len))
-            continue
+            raise ValueError("A rendered Telegram HTML token exceeds the message limit")
         parts = _split_telegram_markdown(chunk, next_limit)
         if len(parts) == 1 and parts[0] == chunk:
-            chunks.extend(split_message(html, max_html_len))
-            continue
+            raise ValueError("Unable to split Telegram Markdown within the HTML limit")
         pending = parts + pending
     return chunks
+
+
+def _split_telegram_markdown_html(content: str, max_html_len: int) -> list[str]:
+    """Split raw Telegram Markdown and return HTML chunks within Telegram's limit."""
+    return [html for _, html in _split_telegram_markdown_html_chunks(content, max_html_len)]
 
 
 _SEND_MAX_RETRIES = 3
@@ -410,19 +416,21 @@ class TelegramChannel(BaseChannel):
         BotCommand("status", "Show bot status"),
         BotCommand("history", "Show recent conversation messages"),
         BotCommand("goal", "Start a sustained objective (long-running task)"),
+        BotCommand("trigger", "Create a named local trigger"),
         BotCommand("pairing", "Manage DM pairing (approve/deny/list)"),
         BotCommand("model", "Switch runtime model preset"),
         BotCommand("skill", "List enabled skills"),
         BotCommand("dream", "Run Dream memory consolidation now"),
         BotCommand("dream_log", "Show the latest Dream memory change"),
         BotCommand("dream_restore", "Restore Dream memory to an earlier version"),
+        BotCommand("dream_prompt", "Tell Dream how to organize memory"),
         BotCommand("help", "Show available commands"),
     ]
 
     # Regex for slash commands routed to AgentLoop via ``_forward_command``.
     # Hyphenated ``dream-*`` commands stay on a separate handler (below).
     TELEGRAM_BUS_SLASH_COMMAND_RE = re.compile(
-        r"^/(?:new|stop|restart|status|dream|history|goal|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
+        r"^/(?:new|stop|restart|status|dream|history|goal|trigger|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
     )
 
     @classmethod
@@ -475,6 +483,8 @@ class TelegramChannel(BaseChannel):
             return content.replace("/dream_log", "/dream-log", 1)
         if content == "/dream_restore" or content.startswith("/dream_restore "):
             return content.replace("/dream_restore", "/dream-restore", 1)
+        if content == "/dream_prompt" or content.startswith("/dream_prompt "):
+            return content.replace("/dream_prompt", "/dream-prompt", 1)
         return content
 
     async def start(self) -> None:
@@ -521,7 +531,9 @@ class TelegramChannel(BaseChannel):
         )
         self._app.add_handler(
             MessageHandler(
-                filters.Regex(r"^/(dream-log|dream_log|dream-restore|dream_restore)(?:@\w+)?(?:\s+.*)?$"),
+                filters.Regex(
+                    r"^/(dream-log|dream_log|dream-restore|dream_restore|dream-prompt|dream_prompt)(?:@\w+)?(?:\s+.*)?$"
+                ),
                 self._forward_command,
             )
         )
@@ -706,8 +718,10 @@ class TelegramChannel(BaseChannel):
             self.logger.warning("bot not running")
             return
 
+        progress_event = msg.event if isinstance(msg.event, ProgressEvent) else None
+
         # Only stop typing indicator and remove reaction for final responses
-        if not msg.metadata.get("_progress", False):
+        if progress_event is None:
             self._stop_typing(msg.chat_id)
             if reply_to_message_id := msg.metadata.get("message_id"):
                 with suppress(ValueError):
@@ -792,7 +806,7 @@ class TelegramChannel(BaseChannel):
 
         # Send text content
         if msg.content and msg.content != "[empty message]":
-            render_as_blockquote = bool(msg.metadata.get("_tool_hint"))
+            render_as_blockquote = bool(progress_event and progress_event.tool_hint)
             buttons = getattr(msg, "buttons", None) or []
             reply_markup = self._build_keyboard(buttons) if buttons else None
             text = msg.content
@@ -887,15 +901,23 @@ class TelegramChannel(BaseChannel):
     def _is_not_modified_error(exc: Exception) -> bool:
         return isinstance(exc, BadRequest) and "message is not modified" in str(exc).lower()
 
-    async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self,
+        chat_id: str,
+        delta: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        stream_id: str | None = None,
+        stream_end: bool = False,
+        resuming: bool = False,
+    ) -> None:
         """Progressive message editing: send on first delta, edit on subsequent ones."""
         if not self._app:
             return
         meta = metadata or {}
         int_chat_id = int(chat_id)
-        stream_id = meta.get("_stream_id")
 
-        if meta.get("_stream_end"):
+        if stream_end:
             buf = self._stream_bufs.get(chat_id)
             if not buf or not buf.message_id or not buf.text:
                 return
@@ -1040,31 +1062,57 @@ class TelegramChannel(BaseChannel):
         intermediate chunks as standalone messages, then opens a new message
         for the tail so subsequent deltas continue streaming into it.
         """
-        chunks = _split_telegram_markdown(buf.text, TELEGRAM_MAX_MESSAGE_LEN)
+        chunks = _split_telegram_markdown_html_chunks(buf.text, TELEGRAM_HTML_MAX_LEN)
         if len(chunks) <= 1:
             return
+        first_markdown, first_html = chunks[0]
         try:
             await self._call_with_retry(
                 self._app.bot.edit_message_text,
                 chat_id=chat_id, message_id=buf.message_id,
-                text=chunks[0],
+                text=first_html,
+                parse_mode="HTML",
             )
-        except Exception as e:
+        except BadRequest as e:
             if not self._is_not_modified_error(e):
-                self.logger.warning("Stream overflow edit failed: {}", e)
-                raise
-        for chunk in chunks[1:-1]:
-            await self._call_with_retry(
-                self._app.bot.send_message,
-                chat_id=chat_id, text=chunk, **thread_kwargs,
-            )
-        tail = chunks[-1]
-        sent = await self._call_with_retry(
-            self._app.bot.send_message,
-            chat_id=chat_id, text=tail, **thread_kwargs,
-        )
+                self.logger.warning(
+                    "Stream overflow HTML edit failed, falling back to plain text: {}", e
+                )
+                try:
+                    await self._call_with_retry(
+                        self._app.bot.edit_message_text,
+                        chat_id=chat_id, message_id=buf.message_id,
+                        text=first_markdown,
+                    )
+                except Exception as plain_error:
+                    if not self._is_not_modified_error(plain_error):
+                        self.logger.warning("Stream overflow plain edit failed: {}", plain_error)
+                        raise
+        except Exception as e:
+            self.logger.warning("Stream overflow edit failed: {}", e)
+            raise
+
+        async def send_chunk(markdown: str, html: str) -> Any:
+            try:
+                return await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=chat_id, text=html, parse_mode="HTML", **thread_kwargs,
+                )
+            except BadRequest as e:
+                self.logger.warning(
+                    "Stream overflow HTML send failed, falling back to plain text: {}", e
+                )
+                return await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=chat_id, text=markdown, **thread_kwargs,
+                )
+
+        for markdown, html in chunks[1:-1]:
+            await send_chunk(markdown, html)
+        markdown_tail, tail_html = chunks[-1]
+        sent = await send_chunk(markdown_tail, tail_html)
         buf.message_id = sent.message_id
-        buf.text = tail
+        buf.text = markdown_tail
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
