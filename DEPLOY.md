@@ -199,7 +199,7 @@ free -h
 
 Each channel has a memory footprint. Disable what you don't use.
 
-**WhatsApp bridge** (optional, requires Node.js ≥18):
+**WhatsApp** (runs natively in Python via `neonize`, no separate bridge process):
 
 ```bash
 # In config.json, disable if not needed:

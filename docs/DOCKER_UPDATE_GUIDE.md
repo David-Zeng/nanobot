@@ -64,15 +64,43 @@ sudo chown -R $(id -u):$(id -g) ~/.nanobot
 
 The `setup_nanobot_rpi.sh` script does this automatically.
 
-### WhatsApp bridge loses session after rebuild
+### WhatsApp bridge removed upstream (neonize migration)
 
-The WhatsApp bridge binary is rebuilt into the image, but the **auth session**
-lives in `~/.nanobot/whatsapp-auth/` on the host and persists via the volume
-mount. You should not need to re-scan the QR code after a rebuild.
+As of the July 2026 upstream merge, the Node.js/Baileys `bridge/` directory
+(and its entrypoint auto-start block) is gone. WhatsApp now runs natively in
+Python via the `neonize` library (`nanobot/channels/whatsapp.py`) — no
+separate bridge process, no `npm install -g` build step for it.
 
-However, if the bridge JS was patched (e.g. the `fromMe` self-message fix),
-the patch must be reapplied to `bridge/src/whatsapp.ts` before rebuilding,
-otherwise self-messaging will stop working again. See `docs/WHATSAPP_DOCKER_SETUP.md`.
+The old Baileys auth session (`creds.json`, `app-state-sync-key-*.json`,
+`bridge-token` in `~/.nanobot/whatsapp-auth/`) is **not compatible** with
+neonize's expected format (`neonize.db`). After merging this change and
+rebuilding, WhatsApp will disconnect and print a QR code to the container
+logs (`docker logs -f nanobot`) — re-scan it from Linked Devices on your
+phone. This is a one-time migration cost, not a per-rebuild issue.
+
+If you previously patched `bridge/src/whatsapp.ts` (read receipts, LID group
+mentions, reply-to-bot detection), those patches are obsolete — the upstream
+Python implementation (`_send_read_receipt`, `_was_mentioned`,
+`_is_reply_to_bot` in `nanobot/channels/whatsapp.py`) already covers the same
+ground natively. The one patch that did **not** carry forward is the `fromMe`
+self-message override: `_handle_neonize_message` unconditionally drops
+messages where `source.IsFromMe` is true, so "message your own linked number"
+no longer reaches the bot. See `docs/WHATSAPP_DOCKER_SETUP.md` (updated for
+the neonize flow) for setup and this specific gap.
+
+### `NANOBOT_EXTRAS` build arg controls which channels actually work
+
+The Dockerfile only installs the Python extras listed in the `NANOBOT_EXTRAS`
+build arg (`ARG NANOBOT_EXTRAS=whatsapp,weixin,telegram`, set once near the
+top of the Python install stage). A channel can be `"enabled": true` in
+`config.json` with a valid token and still silently fail to start with
+`No module named 'telegram'` (or similar) in `docker logs` if its extra
+isn't in that list — the failure is a `WARNING`, not a crash, so the
+container looks healthy.
+
+When enabling a new channel in `config.json`, check whether its extra
+(see `[project.optional-dependencies]` in `pyproject.toml`) is already in
+`NANOBOT_EXTRAS`; if not, add it there and rebuild.
 
 ### Model not supported error
 

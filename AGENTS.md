@@ -59,6 +59,14 @@ Messages flow through an async `MessageBus` (`nanobot/bus/queue.py`) that decoup
 - Architecture constraints: [`.agent/design.md`](.agent/design.md)
 - Security boundaries: [`.agent/security.md`](.agent/security.md)
 - Common gotchas: [`.agent/gotchas.md`](.agent/gotchas.md)
+- This branch (`nanobot-rpi`) is a Raspberry Pi deployment fork of
+  `HKUDS/nanobot`, periodically merged from `origin/main`. Deployment-specific
+  setup, upgrade steps, and Docker gotchas (including the `NANOBOT_EXTRAS`
+  build arg and the WhatsApp bridge → neonize migration) live in
+  [`DEPLOY.md`](DEPLOY.md), [`docs/DOCKER_UPDATE_GUIDE.md`](docs/DOCKER_UPDATE_GUIDE.md),
+  and [`docs/WHATSAPP_DOCKER_SETUP.md`](docs/WHATSAPP_DOCKER_SETUP.md). These
+  files are fork-only and are not touched by upstream merges, unlike this
+  `AGENTS.md`.
 
 ## Contribution Flow
 
