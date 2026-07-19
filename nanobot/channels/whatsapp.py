@@ -290,6 +290,7 @@ class WhatsAppChannel(BaseChannel):
         self._client: Any | None = None
         self._connected = False
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()
+        self._own_message_ids: OrderedDict[str, None] = OrderedDict()
         self._lid_to_phone = self._load_lid_mappings()
         self._self_jids: set[str] = set()
         self._started_at = 0.0
@@ -395,10 +396,19 @@ class WhatsAppChannel(BaseChannel):
 
         to = self._build_jid(msg.chat_id)
         if msg.content:
-            await client.send_message(to, msg.content)
+            response = await client.send_message(to, msg.content)
+            self._remember_own_message_id(_safe_attr(response, "ID"))
 
         for media_path in msg.media or []:
             await self._send_media(client, to, media_path)
+
+    def _remember_own_message_id(self, message_id: Any) -> None:
+        message_id = str(message_id or "").strip()
+        if not message_id:
+            return
+        self._own_message_ids[message_id] = None
+        while len(self._own_message_ids) > 1000:
+            self._own_message_ids.popitem(last=False)
 
     def _build_jid(self, raw: str) -> Any:
         api = _load_neonize()
@@ -416,18 +426,19 @@ class WhatsAppChannel(BaseChannel):
         mime, _ = mimetypes.guess_type(path)
         mimetype = mime or "application/octet-stream"
         if mimetype.startswith("image/"):
-            await client.send_image(to, path)
+            response = await client.send_image(to, path)
         elif mimetype.startswith("video/"):
-            await client.send_video(to, path)
+            response = await client.send_video(to, path)
         elif mimetype.startswith("audio/"):
-            await client.send_audio(to, path)
+            response = await client.send_audio(to, path)
         else:
-            await client.send_document(
+            response = await client.send_document(
                 to,
                 path,
                 filename=Path(path).name,
                 mimetype=mimetype,
             )
+        self._remember_own_message_id(_safe_attr(response, "ID"))
 
     def _register_handlers(
         self,
@@ -530,7 +541,12 @@ class WhatsAppChannel(BaseChannel):
         if info is None or message is None or source is None:
             raise ValueError("WhatsApp MessageEv is missing Info, Message, or MessageSource")
 
-        if bool(_safe_attr(source, "IsFromMe", False)):
+        message_id = str(_safe_attr(info, "ID", "") or "")
+
+        # Self-sent messages are allowed through (e.g. messaging your own linked
+        # number from another device) — but skip echoes of the bot's own replies,
+        # identified by message ID, to avoid replying to itself in a loop.
+        if bool(_safe_attr(source, "IsFromMe", False)) and message_id in self._own_message_ids:
             return
 
         chat_jid = _normalize_jid(_safe_attr(source, "Chat"))
@@ -548,7 +564,6 @@ class WhatsAppChannel(BaseChannel):
             if not self._is_addressed_to_bot(message):
                 return
 
-        message_id = str(_safe_attr(info, "ID", "") or "")
         if message_id:
             if message_id in self._processed_message_ids:
                 return

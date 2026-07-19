@@ -507,6 +507,83 @@ async def test_unauthorized_dm_is_silently_dropped(monkeypatch) -> None:
     client.send_message.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_self_sent_message_is_processed() -> None:
+    """Messaging your own linked number from another device should still reach the bot."""
+    ch = _make_channel()
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="hi from my phone"),
+            message_id="self1",
+            chat=_jid("15551234567", "s.whatsapp.net"),
+            sender=_jid("15551234567", "s.whatsapp.net"),
+            is_from_me=True,
+        ),
+    )
+
+    ch._handle_message.assert_awaited_once()
+    kwargs = ch._handle_message.await_args.kwargs
+    assert kwargs["content"] == "hi from my phone"
+
+
+@pytest.mark.asyncio
+async def test_own_reply_echo_is_not_reprocessed(monkeypatch) -> None:
+    """The bot's own outbound reply must not be treated as a new inbound message."""
+    _patch_neonize_api(monkeypatch)
+    client = SimpleNamespace(
+        send_message=AsyncMock(return_value=_Proto(ID="echo1")),
+        download_any=AsyncMock(),
+    )
+    ch = _make_channel()
+    ch._client = client
+    ch._connected = True
+    ch._handle_message = AsyncMock()
+
+    await ch.send(OutboundMessage(channel="whatsapp", chat_id="15551234567@s.whatsapp.net", content="reply"))
+
+    await ch._handle_neonize_message(
+        client,
+        _event(
+            message=_Proto(conversation="reply"),
+            message_id="echo1",
+            chat=_jid("15551234567", "s.whatsapp.net"),
+            sender=_jid("15551234567", "s.whatsapp.net"),
+            is_from_me=True,
+        ),
+    )
+
+    ch._handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_media_records_own_message_id(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+    client = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_image=AsyncMock(return_value=_Proto(ID="img1")),
+        send_video=AsyncMock(),
+        send_audio=AsyncMock(),
+        send_document=AsyncMock(),
+    )
+    ch = _make_channel()
+    ch._client = client
+    ch._connected = True
+
+    await ch.send(
+        OutboundMessage(
+            channel="whatsapp",
+            chat_id="15551234567@s.whatsapp.net",
+            content="",
+            media=["photo.jpg"],
+        )
+    )
+
+    assert "img1" in ch._own_message_ids
+
+
 def test_reset_database_removes_sqlite_sidecars(tmp_path) -> None:
     db = tmp_path / "neonize.db"
     wal = tmp_path / "neonize.db-wal"
