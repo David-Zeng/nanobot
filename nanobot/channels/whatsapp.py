@@ -421,6 +421,25 @@ class WhatsAppChannel(BaseChannel):
         server = match.group("server")
         return api.build_jid(user, server)
 
+    async def _resolve_lid_via_store(self, client: Any, lid_id: str) -> str:
+        """Look up the phone number for *lid_id* in whatsmeow's own LID store.
+
+        Used as a fallback when a message's own fields don't carry a phone
+        JID alongside the LID (e.g. self-chat messages, where WhatsApp only
+        sends the LID form) — whatsmeow already tracks this mapping for every
+        contact it has seen, independent of nanobot's own in-memory cache.
+        """
+        resolve = _safe_attr(client, "get_pn_from_lid")
+        if resolve is None:
+            return ""
+        try:
+            api = _load_neonize()
+            jid = await resolve(api.build_jid(lid_id, "lid"))
+        except Exception as exc:  # noqa: BLE001 - unknown LID is expected for strangers
+            self.logger.debug("Could not resolve LID {} via WhatsApp store: {}", lid_id, exc)
+            return ""
+        return _bare_jid(jid)
+
     async def _send_media(self, client: Any, to: Any, media_path: str) -> None:
         path = str(Path(media_path).expanduser())
         mime, _ = mimetypes.guess_type(path)
@@ -584,7 +603,15 @@ class WhatsAppChannel(BaseChannel):
         if phone_id and lid_id:
             self._lid_to_phone[lid_id] = phone_id
 
-        sender_id = phone_id or self._lid_to_phone.get(lid_id, "") or lid_id
+        sender_id = phone_id or self._lid_to_phone.get(lid_id, "")
+        if not sender_id and lid_id:
+            resolved = await self._resolve_lid_via_store(client, lid_id)
+            if resolved:
+                self._lid_to_phone[lid_id] = resolved
+                phone_id = resolved
+                sender_id = resolved
+
+        sender_id = sender_id or lid_id
         if not sender_id:
             raise ValueError("WhatsApp message has no resolvable sender ID")
         metadata = {

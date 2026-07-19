@@ -530,6 +530,70 @@ async def test_self_sent_message_is_processed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lid_only_self_message_resolves_phone_via_store(monkeypatch) -> None:
+    """Self-chat events carry only the LID (no phone JID anywhere in the event) —
+
+    resolution must fall back to WhatsApp's own LID store (whatsmeow already
+    maps every contact's LID to phone number) instead of leaving the sender
+    unresolved and misclassified as an unauthorized stranger.
+    """
+    _patch_neonize_api(monkeypatch)
+    ch = WhatsAppChannel({"enabled": True, "allowFrom": ["15551234567"]}, MagicMock())
+    ch._started_at = 0
+    ch._handle_message = AsyncMock()
+    client = SimpleNamespace(
+        download_any=AsyncMock(),
+        get_pn_from_lid=AsyncMock(return_value=_jid("15551234567", "s.whatsapp.net")),
+    )
+
+    await ch._handle_neonize_message(
+        client,
+        _event(
+            message=_Proto(conversation="self chat, LID only"),
+            message_id="self2",
+            chat=_jid("99999999999999", "lid"),
+            sender=_jid("99999999999999", "lid"),
+            is_from_me=True,
+        ),
+    )
+
+    client.get_pn_from_lid.assert_awaited_once()
+    ch._handle_message.assert_awaited_once()
+    kwargs = ch._handle_message.await_args.kwargs
+    assert kwargs["sender_id"] == "15551234567"
+    assert ch._lid_to_phone["99999999999999"] == "15551234567"
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_lid_falls_back_to_bare_lid_as_unauthorized() -> None:
+    """A LID the store has never seen (a genuine stranger) must not crash —
+
+    it should fall through to the bare LID, which then fails is_allowed()
+    and is ignored, same as before this fallback existed.
+    """
+    ch = WhatsAppChannel({"enabled": True, "allowFrom": ["15551234567"]}, MagicMock())
+    ch._started_at = 0
+    ch._handle_message = AsyncMock()
+    client = SimpleNamespace(
+        download_any=AsyncMock(),
+        get_pn_from_lid=AsyncMock(side_effect=RuntimeError("lid not found in store")),
+    )
+
+    await ch._handle_neonize_message(
+        client,
+        _event(
+            message=_Proto(conversation="stranger"),
+            message_id="stranger1",
+            chat=_jid("00000000000000", "lid"),
+            sender=_jid("00000000000000", "lid"),
+        ),
+    )
+
+    ch._handle_message.assert_not_called()
+    assert "00000000000000" not in ch._lid_to_phone
+
+
+@pytest.mark.asyncio
 async def test_own_reply_echo_is_not_reprocessed(monkeypatch) -> None:
     """The bot's own outbound reply must not be treated as a new inbound message."""
     _patch_neonize_api(monkeypatch)
