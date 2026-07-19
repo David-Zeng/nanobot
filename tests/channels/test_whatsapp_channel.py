@@ -480,16 +480,11 @@ async def test_unauthorized_voice_message_does_not_download_or_transcribe(
 
     client.download_any.assert_not_awaited()
     ch.transcribe_audio.assert_not_awaited()
-    ch._handle_message.assert_awaited_once()
-    kwargs = ch._handle_message.await_args.kwargs
-    assert kwargs["sender_id"] == "blocked"
-    assert kwargs["content"] == ""
-    assert kwargs["media"] == []
-    assert kwargs["is_dm"] is True
+    ch._handle_message.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_dm_uses_base_pairing_flow(monkeypatch) -> None:
+async def test_unauthorized_dm_is_silently_dropped(monkeypatch) -> None:
     _patch_neonize_api(monkeypatch)
     monkeypatch.setattr("nanobot.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH")
     monkeypatch.setattr("nanobot.channels.base.is_approved", lambda _ch, _sid: False)
@@ -509,9 +504,7 @@ async def test_unauthorized_dm_uses_base_pairing_flow(monkeypatch) -> None:
     )
 
     client.download_any.assert_not_awaited()
-    client.send_message.assert_awaited_once()
-    assert client.send_message.await_args.args[0] == ("blocked", "s.whatsapp.net")
-    assert "ABCD-EFGH" in client.send_message.await_args.args[1]
+    client.send_message.assert_not_awaited()
 
 
 def test_reset_database_removes_sqlite_sidecars(tmp_path) -> None:

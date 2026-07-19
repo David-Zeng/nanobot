@@ -585,20 +585,11 @@ class WhatsAppChannel(BaseChannel):
         }
         if not self.is_allowed(sender_id):
             self.logger.info(
-                "Passing unauthorized WhatsApp sender {} to pairing flow "
-                "(phone={}, lid={}, chat={})",
+                "Ignoring unauthorized WhatsApp sender {} (phone={}, lid={}, chat={})",
                 sender_id,
                 phone_id or "",
                 lid_id or "",
                 chat_jid,
-            )
-            await self._handle_message(
-                sender_id=sender_id,
-                chat_id=chat_jid,
-                content=_message_text(message),
-                media=[],
-                metadata=metadata,
-                is_dm=not is_group,
             )
             return
 
