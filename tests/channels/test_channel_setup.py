@@ -92,6 +92,11 @@ def test_webui_forms_have_writable_mattermost_and_whatsapp_contracts() -> None:
         "enum",
         {"mention", "open"},
     )
+    assert whatsapp.route_field_types["dmPolicy"] == (
+        "enum",
+        {"mention", "open"},
+    )
+    assert whatsapp.fields["dmPolicy"].default == "open"
 
 
 def test_every_channel_is_a_self_contained_package() -> None:

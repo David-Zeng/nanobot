@@ -28,7 +28,8 @@ Add the WhatsApp channel to `~/.nanobot/config.json`:
     "whatsapp": {
       "enabled": true,
       "allowFrom": ["61433674165"],
-      "groupPolicy": "open"
+      "groupPolicy": "open",
+      "dmPolicy": "mention"
     }
   }
 }
@@ -39,6 +40,8 @@ Add the WhatsApp channel to `~/.nanobot/config.json`:
 
 `groupPolicy` defaults to `"open"` (reply to every group message); set it to
 `"mention"` to only reply when the bot is @-mentioned or replied to.
+`dmPolicy` also defaults to `"open"`; set it to `"mention"` to ignore
+unsolicited direct messages while accepting mentions and replies to the bot.
 
 ## Step 2 — Link Your Device (Scan QR Code)
 

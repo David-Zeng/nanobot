@@ -24,6 +24,13 @@
           "open": "所有訊息",
           "allowlist": "允許清單"
         }
+      },
+      "dmPolicy": {
+        "label": "私訊行為",
+        "choices": {
+          "mention": "僅提及或回覆時",
+          "open": "所有訊息"
+        }
       }
     }
   }

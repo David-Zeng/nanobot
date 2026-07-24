@@ -52,15 +52,17 @@ Merge this snippet into `~/.nanobot/config.json`:
   "channels": {
     "whatsapp": {
       "enabled": true,
-      "groupPolicy": "mention"
+      "groupPolicy": "mention",
+      "dmPolicy": "mention"
     }
   }
 }
 ```
 
-Omitting `allowFrom` enables pairing-only mode for private chats. `groupPolicy`
-defaults to `"open"` in the channel, but `"mention"` is safer for a first
-deployment.
+Omitting `allowFrom` enables pairing-only mode for private chats. Both
+`groupPolicy` and `dmPolicy` default to `"open"`. Set either to `"mention"`
+to require an explicit WhatsApp mention or a reply to Nanobot; `dmPolicy` is
+useful when unsolicited direct messages should be ignored.
 
 ## Run nanobot gateway
 

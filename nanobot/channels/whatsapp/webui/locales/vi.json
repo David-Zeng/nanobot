@@ -24,6 +24,13 @@
           "open": "Mọi tin nhắn",
           "allowlist": "Danh sách cho phép"
         }
+      },
+      "dmPolicy": {
+        "label": "Hành vi tin nhắn trực tiếp",
+        "choices": {
+          "mention": "Chỉ khi nhắc đến hoặc trả lời",
+          "open": "Mọi tin nhắn"
+        }
       }
     }
   }

@@ -305,6 +305,52 @@ async def test_group_policy_mention_accepts_reply_to_bot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dm_policy_mention_skips_unaddressed_direct_message() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._self_jids = {"bot@s.whatsapp.net", "bot"}
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=_Proto(conversation="hello direct")),
+    )
+
+    ch._handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dm_policy_mention_accepts_mention_in_direct_message() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._self_jids = {"bot@s.whatsapp.net", "bot"}
+    ch._handle_message = AsyncMock()
+    context = _Proto(mentionedJID=["bot@s.whatsapp.net"])
+    message = _Proto(extendedTextMessage=_Proto(text="hello @bot", contextInfo=context))
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=message),
+    )
+
+    ch._handle_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dm_policy_mention_accepts_reply_to_bot_in_direct_message() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._self_jids = {"bot@s.whatsapp.net", "bot"}
+    ch._handle_message = AsyncMock()
+    context = _Proto(participant="bot@s.whatsapp.net")
+    message = _Proto(extendedTextMessage=_Proto(text="follow up", contextInfo=context))
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=message),
+    )
+
+    ch._handle_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_group_sender_id_uses_participant_not_group_jid() -> None:
     ch = WhatsAppChannel({"enabled": True, "allowFrom": ["SENDERLID"]}, MagicMock())
     ch._started_at = 0

@@ -24,6 +24,13 @@
           "open": "모든 메시지",
           "allowlist": "허용 목록"
         }
+      },
+      "dmPolicy": {
+        "label": "다이렉트 메시지 동작",
+        "choices": {
+          "mention": "멘션 또는 답글만",
+          "open": "모든 메시지"
+        }
       }
     }
   }

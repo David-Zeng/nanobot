@@ -24,6 +24,13 @@
           "open": "Tous les messages",
           "allowlist": "Liste d’autorisation"
         }
+      },
+      "dmPolicy": {
+        "label": "Comportement des messages directs",
+        "choices": {
+          "mention": "Mentions ou réponses uniquement",
+          "open": "Tous les messages"
+        }
       }
     }
   }

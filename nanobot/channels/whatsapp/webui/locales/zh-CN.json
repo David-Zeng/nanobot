@@ -24,6 +24,13 @@
           "open": "所有消息",
           "allowlist": "白名单"
         }
+      },
+      "dmPolicy": {
+        "label": "私信行为",
+        "choices": {
+          "mention": "仅提及或回复时",
+          "open": "所有消息"
+        }
       }
     }
   }

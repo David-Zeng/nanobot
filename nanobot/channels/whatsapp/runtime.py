@@ -27,6 +27,7 @@ class WhatsAppConfig(Base):
     enabled: bool = False
     allow_from: list[str] = Field(default_factory=list)
     group_policy: Literal["open", "mention"] = "open"
+    dm_policy: Literal["open", "mention"] = "open"
     database_path: str = ""
     lid_mappings: dict[str, str] = Field(default_factory=dict)
 
@@ -579,9 +580,9 @@ class WhatsAppChannel(BaseChannel):
             return
 
         is_group = bool(_safe_attr(source, "IsGroup", False))
-        if is_group and self.config.group_policy == "mention":
-            if not self._is_addressed_to_bot(message):
-                return
+        policy = self.config.group_policy if is_group else self.config.dm_policy
+        if policy == "mention" and not self._is_addressed_to_bot(message):
+            return
 
         if message_id:
             if message_id in self._processed_message_ids:

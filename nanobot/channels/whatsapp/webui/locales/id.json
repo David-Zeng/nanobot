@@ -24,6 +24,13 @@
           "open": "Semua pesan",
           "allowlist": "Daftar izin"
         }
+      },
+      "dmPolicy": {
+        "label": "Perilaku pesan langsung",
+        "choices": {
+          "mention": "Hanya sebutan atau balasan",
+          "open": "Semua pesan"
+        }
       }
     }
   }

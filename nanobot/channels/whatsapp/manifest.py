@@ -15,6 +15,12 @@ SETUP_SPEC = ChannelSetupSpec(
             default="open",
             snapshot=False,
         ),
+        "dmPolicy": field(
+            "enum",
+            choices=DIRECT_GROUP_POLICIES,
+            default="open",
+            snapshot=False,
+        ),
         "databasePath": field(writable=False, snapshot=False),
     },
     official_url="https://faq.whatsapp.com/",
