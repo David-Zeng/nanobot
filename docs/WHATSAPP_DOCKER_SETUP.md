@@ -82,15 +82,34 @@ side or the auth DB is deleted.
 Send a WhatsApp message from your phone (or another account in `allowFrom`)
 to the linked number, or add nanobot to a group.
 
-> **Known gap — self-messaging is not supported.** The previous bridge patched
-> out Baileys' `fromMe` filter so you could message the bot by sending a
-> WhatsApp message **to your own number** (appears as "You"). The new neonize
-> implementation has no such option: `nanobot/channels/whatsapp.py` unconditionally
-> drops messages where `source.IsFromMe` is true
-> (`_handle_neonize_message`). If your workflow depends on self-messaging,
-> this will not receive replies until either an upstream toggle is added or
-> this fork reintroduces the override. Message from a second number/device in
-> the meantime.
+With the default `"open"` policies every permitted message gets a reply. Under
+a `"mention"` policy (verified on the Pi deployment, 2026-07-24), a message is
+handled only when it addresses the bot in one of three ways:
+
+| How to address the bot | DMs | Groups |
+|---|---|---|
+| Start the message with `@nanobot ` (the `mentionKeyword`) | ✅ | ✅ |
+| Reply to one of Nanobot's messages | ✅ | ✅ |
+| Genuine WhatsApp @mention (picked from the popup) | n/a — not possible in 1:1 chats | ✅ |
+
+Keyword rules, as implemented and tested:
+
+- The message must **start** with the keyword — `@nanobot hello` works;
+  `hello @nanobot` and `@nanobots hello` do not.
+- Matching is case-insensitive and tolerates leading whitespace.
+- The keyword is stripped before the agent sees the text (the agent receives
+  `hello`).
+- A bare `@nanobot` with no other text and no media is dropped.
+- The keyword is how a **new** DM conversation starts under
+  `dmPolicy: "mention"`; once Nanobot has replied, replying to its messages
+  needs no keyword.
+- `mentionKeyword` does **not** bypass `allowFrom` — an unlisted sender is
+  dropped no matter what they type.
+
+> **Self-messaging works.** Messaging your own linked number from another
+> device (the chat labeled "You") reaches the bot; this fork restores the
+> behavior the old bridge provided. The bot's own outbound replies are
+> deduplicated so they are not re-processed as inbound messages.
 
 ## Troubleshooting
 
@@ -112,6 +131,22 @@ The QR renders as ASCII art via `segno` right after `Scan the WhatsApp QR
 code with Linked Devices` in the log stream — it can lag the log line by a
 few seconds. Re-run `docker logs -f nanobot` and wait a moment, or `docker
 logs nanobot` (non-follow) after a short pause.
+
+### No reply in a DM and nothing in the logs
+
+Under `dmPolicy: "mention"` an unaddressed direct message is dropped
+**silently, before any log line** — this is by design. Check, in order:
+
+1. The message starts with the exact `mentionKeyword` (default `@nanobot`,
+   `@` included, followed by a space) — or is a reply to a Nanobot message.
+2. The sender's number is in `allowFrom` in international format without `+`
+   (e.g. an Australian mobile `0433322885` must be listed as `61433322885`).
+   A sender that passes the keyword gate but fails `allowFrom` logs
+   `Ignoring unauthorized WhatsApp sender ...`; a message that fails the
+   keyword gate logs nothing at all.
+3. The message was sent **after** the container started — messages older than
+   channel startup are ignored, so anything sent during a restart window is
+   never replayed.
 
 ### Messages received but no reply
 
