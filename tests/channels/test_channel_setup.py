@@ -97,6 +97,8 @@ def test_webui_forms_have_writable_mattermost_and_whatsapp_contracts() -> None:
         {"mention", "open"},
     )
     assert whatsapp.fields["dmPolicy"].default == "open"
+    assert whatsapp.route_field_types["mentionKeyword"] == "string"
+    assert whatsapp.fields["mentionKeyword"].default == "@nanobot"
 
 
 def test_every_channel_is_a_self_contained_package() -> None:

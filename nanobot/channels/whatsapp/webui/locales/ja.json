@@ -31,6 +31,10 @@
           "mention": "メンションまたは返信のみ",
           "open": "すべてのメッセージ"
         }
+      },
+      "mentionKeyword": {
+        "label": "メンションキーワード",
+        "placeholder": "テキストトリガー（例: @nanobot、空で無効）"
       }
     }
   }

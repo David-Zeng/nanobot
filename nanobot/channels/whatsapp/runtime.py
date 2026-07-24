@@ -28,6 +28,7 @@ class WhatsAppConfig(Base):
     allow_from: list[str] = Field(default_factory=list)
     group_policy: Literal["open", "mention"] = "open"
     dm_policy: Literal["open", "mention"] = "open"
+    mention_keyword: str = "@nanobot"
     database_path: str = ""
     lid_mappings: dict[str, str] = Field(default_factory=dict)
 
@@ -639,7 +640,7 @@ class WhatsAppChannel(BaseChannel):
             )
             return
 
-        text = _message_text(message)
+        text = self._strip_mention_keyword(_message_text(message))
         media_paths: list[str] = []
         media = _media_message(message)
         if media is not None:
@@ -677,7 +678,27 @@ class WhatsAppChannel(BaseChannel):
         return None
 
     def _is_addressed_to_bot(self, message: Any) -> bool:
-        return self._was_mentioned(message) or self._is_reply_to_bot(message)
+        return (
+            self._was_mentioned(message)
+            or self._is_reply_to_bot(message)
+            or self._matches_mention_keyword(_message_text(message))
+        )
+
+    def _matches_mention_keyword(self, text: str) -> bool:
+        keyword = self.config.mention_keyword.strip()
+        if not keyword:
+            return False
+        stripped = text.lstrip()
+        if not stripped.lower().startswith(keyword.lower()):
+            return False
+        rest = stripped[len(keyword):]
+        return not rest or rest[0].isspace()
+
+    def _strip_mention_keyword(self, text: str) -> str:
+        if not self._matches_mention_keyword(text):
+            return text
+        keyword = self.config.mention_keyword.strip()
+        return text.lstrip()[len(keyword):].lstrip()
 
     def _was_mentioned(self, message: Any) -> bool:
         if not self._self_jids:

@@ -31,6 +31,10 @@
           "mention": "Mentions ou réponses uniquement",
           "open": "Tous les messages"
         }
+      },
+      "mentionKeyword": {
+        "label": "Mot-clé de mention",
+        "placeholder": "Déclencheur texte, ex. @nanobot (vide pour désactiver)"
       }
     }
   }

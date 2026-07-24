@@ -43,6 +43,12 @@ Add the WhatsApp channel to `~/.nanobot/config.json`:
 `dmPolicy` also defaults to `"open"`; set it to `"mention"` to ignore
 unsolicited direct messages while accepting mentions and replies to the bot.
 
+One-to-one chats cannot produce a genuine WhatsApp @mention, so under
+`dmPolicy: "mention"` a new conversation is started by beginning the message
+with the `mentionKeyword` text trigger (default `"@nanobot"`, case-insensitive,
+stripped before the agent sees the message). Set `mentionKeyword` to `""` to
+require a reply to the bot instead.
+
 ## Step 2 — Link Your Device (Scan QR Code)
 
 **Option A — via the running gateway.** Start (or restart) the container and

@@ -61,8 +61,11 @@ Merge this snippet into `~/.nanobot/config.json`:
 
 Omitting `allowFrom` enables pairing-only mode for private chats. Both
 `groupPolicy` and `dmPolicy` default to `"open"`. Set either to `"mention"`
-to require an explicit WhatsApp mention or a reply to Nanobot; `dmPolicy` is
-useful when unsolicited direct messages should be ignored.
+to require an explicit WhatsApp mention, a reply to Nanobot, or a message
+starting with the `mentionKeyword` text trigger (default `"@nanobot"`,
+case-insensitive, stripped before the agent sees the message). The keyword is
+how a direct message opens a new conversation, since one-to-one chats cannot
+produce a genuine @mention; set `mentionKeyword` to `""` to disable it.
 
 ## Run nanobot gateway
 

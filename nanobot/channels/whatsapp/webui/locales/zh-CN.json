@@ -31,6 +31,10 @@
           "mention": "仅提及或回复时",
           "open": "所有消息"
         }
+      },
+      "mentionKeyword": {
+        "label": "提及关键词",
+        "placeholder": "文本触发词，如 @nanobot（留空禁用）"
       }
     }
   }

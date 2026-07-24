@@ -31,6 +31,10 @@
           "mention": "Mention or reply only",
           "open": "All messages"
         }
+      },
+      "mentionKeyword": {
+        "label": "Mention keyword",
+        "placeholder": "Text trigger, e.g. @nanobot (empty disables)"
       }
     }
   }

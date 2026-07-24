@@ -31,6 +31,10 @@
           "mention": "Chỉ khi nhắc đến hoặc trả lời",
           "open": "Mọi tin nhắn"
         }
+      },
+      "mentionKeyword": {
+        "label": "Từ khóa nhắc đến",
+        "placeholder": "Kích hoạt bằng văn bản, ví dụ @nanobot (để trống để tắt)"
       }
     }
   }

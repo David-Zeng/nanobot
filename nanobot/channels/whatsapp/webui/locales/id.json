@@ -31,6 +31,10 @@
           "mention": "Hanya sebutan atau balasan",
           "open": "Semua pesan"
         }
+      },
+      "mentionKeyword": {
+        "label": "Kata kunci mention",
+        "placeholder": "Pemicu teks, mis. @nanobot (kosong menonaktifkan)"
       }
     }
   }

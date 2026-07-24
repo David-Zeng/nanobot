@@ -31,6 +31,10 @@
           "mention": "멘션 또는 답글만",
           "open": "모든 메시지"
         }
+      },
+      "mentionKeyword": {
+        "label": "멘션 키워드",
+        "placeholder": "텍스트 트리거, 예: @nanobot (비우면 비활성화)"
       }
     }
   }

@@ -31,6 +31,10 @@
           "mention": "Somente menções ou respostas",
           "open": "Todas as mensagens"
         }
+      },
+      "mentionKeyword": {
+        "label": "Palavra-chave de menção",
+        "placeholder": "Gatilho de texto, ex.: @nanobot (vazio desativa)"
       }
     }
   }

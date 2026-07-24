@@ -351,6 +351,126 @@ async def test_dm_policy_mention_accepts_reply_to_bot_in_direct_message() -> Non
 
 
 @pytest.mark.asyncio
+async def test_dm_policy_mention_accepts_keyword_prefix_and_strips_it() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=_Proto(conversation="@nanobot what's up")),
+    )
+
+    ch._handle_message.assert_awaited_once()
+    assert ch._handle_message.await_args.kwargs["content"] == "what's up"
+
+
+@pytest.mark.asyncio
+async def test_dm_policy_mention_keyword_is_case_insensitive_and_tolerates_whitespace() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=_Proto(conversation="  @NanoBot hello")),
+    )
+
+    ch._handle_message.assert_awaited_once()
+    assert ch._handle_message.await_args.kwargs["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_dm_policy_mention_ignores_keyword_lookalikes() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._handle_message = AsyncMock()
+    client = SimpleNamespace(download_any=AsyncMock())
+
+    await ch._handle_neonize_message(
+        client, _event(message=_Proto(conversation="@nanobots hi"), message_id="k1")
+    )
+    await ch._handle_neonize_message(
+        client, _event(message=_Proto(conversation="hey @nanobot hi"), message_id="k2")
+    )
+
+    ch._handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dm_policy_mention_bare_keyword_without_media_is_dropped() -> None:
+    ch = _make_channel({"dmPolicy": "mention"})
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=_Proto(conversation="@nanobot")),
+    )
+
+    ch._handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_mention_keyword_disables_text_trigger() -> None:
+    ch = _make_channel({"dmPolicy": "mention", "mentionKeyword": ""})
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=_Proto(conversation="@nanobot hi")),
+    )
+
+    ch._handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_custom_mention_keyword_overrides_default() -> None:
+    ch = _make_channel({"dmPolicy": "mention", "mentionKeyword": "/bot"})
+    ch._handle_message = AsyncMock()
+    client = SimpleNamespace(download_any=AsyncMock())
+
+    await ch._handle_neonize_message(
+        client, _event(message=_Proto(conversation="/bot status"), message_id="c1")
+    )
+    await ch._handle_neonize_message(
+        client, _event(message=_Proto(conversation="@nanobot status"), message_id="c2")
+    )
+
+    ch._handle_message.assert_awaited_once()
+    assert ch._handle_message.await_args.kwargs["content"] == "status"
+
+
+@pytest.mark.asyncio
+async def test_group_policy_mention_accepts_keyword_prefix() -> None:
+    ch = _make_channel({"groupPolicy": "mention"})
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="@nanobot hi group"),
+            chat=_jid("120363000", "g.us"),
+            sender=_jid("SENDERLID", "lid"),
+            is_group=True,
+        ),
+    )
+
+    ch._handle_message.assert_awaited_once()
+    assert ch._handle_message.await_args.kwargs["content"] == "hi group"
+
+
+@pytest.mark.asyncio
+async def test_keyword_prefix_is_stripped_under_open_policy() -> None:
+    ch = _make_channel()
+    ch._handle_message = AsyncMock()
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(message=_Proto(conversation="@nanobot hi there")),
+    )
+
+    ch._handle_message.assert_awaited_once()
+    assert ch._handle_message.await_args.kwargs["content"] == "hi there"
+
+
+@pytest.mark.asyncio
 async def test_group_sender_id_uses_participant_not_group_jid() -> None:
     ch = WhatsAppChannel({"enabled": True, "allowFrom": ["SENDERLID"]}, MagicMock())
     ch._started_at = 0

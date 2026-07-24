@@ -21,6 +21,7 @@ SETUP_SPEC = ChannelSetupSpec(
             default="open",
             snapshot=False,
         ),
+        "mentionKeyword": field(default="@nanobot", snapshot=False),
         "databasePath": field(writable=False, snapshot=False),
     },
     official_url="https://faq.whatsapp.com/",
