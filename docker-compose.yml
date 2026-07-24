@@ -2,6 +2,8 @@ x-common-config: &common-config
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-whatsapp,weixin,telegram}
   volumes:
     - ~/.nanobot:/home/nanobot/.nanobot
     - /usr/local/bin/gws:/usr/local/bin/gws:ro

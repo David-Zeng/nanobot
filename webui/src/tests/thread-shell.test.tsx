@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { preloadMarkdownText } from "@/components/MarkdownText";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { CLI_APPS_CHANGED_EVENT } from "@/lib/cli-app-events";
 import { ClientProvider } from "@/providers/ClientProvider";
@@ -13,13 +14,23 @@ const HERO_GREETING_PATTERN =
 function makeClient() {
   const errorHandlers = new Set<(err: { kind: string }) => void>();
   const chatHandlers = new Map<string, Set<(ev: import("@/lib/types").InboundEvent) => void>>();
+  const runtimeModelHandlers = new Set<
+    (modelName: string | null, modelPreset?: string | null) => void
+  >();
   const sessionUpdateHandlers = new Set<(chatId: string, scope?: string) => void>();
   const goalStateByChatId = new Map<string, import("@/lib/types").GoalStateWsPayload>();
   return {
     status: "open" as const,
     defaultChatId: null as string | null,
     onStatus: () => () => {},
-    onRuntimeModelUpdate: () => () => {},
+    onRuntimeModelUpdate: (
+      handler: (modelName: string | null, modelPreset?: string | null) => void,
+    ) => {
+      runtimeModelHandlers.add(handler);
+      return () => {
+        runtimeModelHandlers.delete(handler);
+      };
+    },
     getRunStartedAt: () => null,
     getGoalState: (chatId: string) => goalStateByChatId.get(chatId),
     onChat: (chatId: string, handler: (ev: import("@/lib/types").InboundEvent) => void) => {
@@ -53,6 +64,9 @@ function makeClient() {
         goalStateByChatId.set(chatId, ev.goal_state);
       }
       for (const h of chatHandlers.get(chatId) ?? []) h(ev);
+    },
+    _emitRuntimeModelUpdate(modelName: string | null, modelPreset?: string | null) {
+      for (const h of runtimeModelHandlers) h(modelName, modelPreset);
     },
     _emitSessionUpdate(chatId: string, scope?: string) {
       for (const h of sessionUpdateHandlers) h(chatId, scope);
@@ -93,7 +107,7 @@ function expectSendMessageWithTurn(
   );
 }
 
-function session(chatId: string) {
+function session(chatId: string, modelPreset?: string | null) {
   return {
     key: `websocket:${chatId}`,
     channel: "websocket" as const,
@@ -101,6 +115,7 @@ function session(chatId: string) {
     createdAt: null,
     updatedAt: null,
     preview: "",
+    modelPreset,
   };
 }
 
@@ -155,6 +170,8 @@ function modelSettings(model: string, provider: string): SettingsPayload {
       temperature: 0.7,
       reasoning_effort: null,
     }],
+    model_call_order: [],
+    model_call_order_editable: false,
     providers: [
       { name: "deepseek", label: "DeepSeek", configured: true },
       { name: "openai_codex", label: "OpenAI Codex", configured: true },
@@ -219,6 +236,20 @@ function modelSettings(model: string, provider: string): SettingsPayload {
   };
 }
 
+function settingsWithFastPreset(): SettingsPayload {
+  const settings = modelSettings("deepseek-v4-pro", "deepseek");
+  settings.model_presets.push({
+    ...settings.model_presets[0]!,
+    name: "fast",
+    label: "Fast",
+    active: false,
+    is_default: false,
+    model: "openai-codex/gpt-5.5",
+    provider: "openai_codex",
+  });
+  return settings;
+}
+
 describe("ThreadShell", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -229,6 +260,60 @@ describe("ThreadShell", () => {
         json: async () => ({}),
       }),
     );
+  });
+
+  it("keeps inferred file paths non-interactive when the availability probe fails", async () => {
+    await preloadMarkdownText();
+    const client = makeClient();
+    let resolveProbe!: (value: Response) => void;
+    const probe = new Promise<Response>((resolve) => {
+      resolveProbe = resolve;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("websocket%3Apreview-error/webui-thread")) {
+        return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+          { role: "assistant", content: "Unreadable file: `prompts/dream.md`" },
+        ])));
+      }
+      if (url.includes("websocket%3Apreview-error/file-preview?")) return probe;
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session("preview-error")}
+        title="Preview error"
+        onToggleSidebar={() => {}}
+      />,
+    ));
+
+    const reference = await screen.findByTestId("inline-file-path");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("file-preview?path=prompts%2Fdream.md&probe=1"),
+      expect.anything(),
+    ));
+    await act(async () => {
+      resolveProbe({
+        ok: false,
+        status: 500,
+        text: async () => "failed to read file",
+        json: async () => ({}),
+      } as Response);
+      await probe;
+      await Promise.resolve();
+    });
+
+    expect(reference).not.toHaveAttribute("role");
+    expect(reference).not.toHaveAttribute("tabindex");
+    fireEvent.click(reference);
+    expect(screen.queryByText("failed to read file")).not.toBeInTheDocument();
   });
 
   it("does not navigate away when clicking the chat title", async () => {
@@ -284,6 +369,141 @@ describe("ThreadShell", () => {
     });
 
     expect(await screen.findByTestId("composer-model-logo-openai_codex")).toBeInTheDocument();
+  });
+
+  it("keeps the composer model name and provider on the same settings snapshot", async () => {
+    const client = makeClient();
+    render(
+      wrap(
+        client,
+        <ThreadShell
+          session={session("model-settings-sync")}
+          title="Model settings sync"
+          onToggleSidebar={() => {}}
+          settingsSnapshot={modelSettings("openai-codex/gpt-5.5", "openai_codex")}
+        />,
+        "ling/ling-3.0-flash",
+      ),
+    );
+
+    expect(await screen.findByTestId("composer-model-logo-openai_codex")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
+    expect(screen.queryByText("ling-3.0-flash")).not.toBeInTheDocument();
+  });
+
+  it("resolves the composer model from the active session preset", async () => {
+    const client = makeClient();
+    render(
+      wrap(
+        client,
+        <ThreadShell
+          session={session("chat-fast", "fast")}
+          title="Fast session"
+          onToggleSidebar={() => {}}
+          settingsSnapshot={settingsWithFastPreset()}
+        />,
+        "deepseek-v4-pro",
+      ),
+    );
+
+    expect(await screen.findByTitle("gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
+    expect(screen.queryByTitle("deepseek-v4-pro · DeepSeek")).not.toBeInTheDocument();
+  });
+
+  it("uses the backend-resolved provider for an auto session preset", async () => {
+    const client = makeClient();
+    const settings = modelSettings("deepseek-v4-pro", "deepseek");
+    settings.providers.push({
+      name: "companyproxy",
+      label: "Company Proxy",
+      configured: true,
+    });
+    settings.model_presets.push({
+      ...settings.model_presets[0]!,
+      name: "fast",
+      label: "Fast",
+      active: false,
+      is_default: false,
+      model: "companyproxy/gpt-4",
+      provider: "auto",
+      resolved_provider: "companyproxy",
+    });
+
+    render(
+      wrap(
+        client,
+        <ThreadShell
+          session={session("chat-auto", "fast")}
+          title="Auto provider session"
+          onToggleSidebar={() => {}}
+          settingsSnapshot={settings}
+        />,
+        "deepseek-v4-pro",
+      ),
+    );
+
+    expect(await screen.findByTitle("gpt-4 · Company Proxy")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Model not configured" })).not.toBeInTheDocument();
+  });
+
+  it("highlights the configured model badge without replacing the preset label", async () => {
+    const client = makeClient();
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session("fallback-model")}
+        title="Fallback model"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={modelSettings("openai-codex/gpt-5.5", "openai_codex")}
+      />,
+      "openai-codex/gpt-5.5",
+    ));
+
+    expect(await screen.findByText("gpt-5.5")).toBeInTheDocument();
+    const configuredBadge = screen.getByTestId("composer-model-logo-openai_codex").parentElement;
+    expect(configuredBadge).not.toBeNull();
+    expect(configuredBadge).toHaveClass("composer-model-badge");
+    expect(configuredBadge).not.toHaveAttribute("data-fallback");
+
+    act(() => {
+      client._emitChat("fallback-model", {
+        event: "turn_model_updated",
+        chat_id: "fallback-model",
+        model_name: "deepseek/deepseek-chat",
+      });
+    });
+
+    const logo = screen.getByTestId("composer-model-logo-openai_codex");
+    const badge = logo.parentElement;
+    expect(badge).not.toBeNull();
+    expect(badge).toBe(configuredBadge);
+    expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
+    expect(screen.queryByText("deepseek-chat")).not.toBeInTheDocument();
+    expect(badge).toHaveAttribute("data-fallback", "true");
+    expect(badge).toHaveAttribute(
+      "title",
+      "deepseek/deepseek-chat",
+    );
+    expect(logo).not.toHaveAttribute("data-fallback");
+
+    act(() => {
+      client._emitChat("fallback-model", {
+        event: "turn_end",
+        chat_id: "fallback-model",
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("composer-model-logo-openai_codex").parentElement,
+      ).not.toHaveAttribute("data-fallback");
+    });
+    expect(
+      screen.getByTestId("composer-model-logo-openai_codex").parentElement,
+    ).toHaveAttribute("title", "gpt-5.5 · OpenAI Codex");
+    expect(
+      screen.getByTestId("composer-model-logo-openai_codex").parentElement,
+    ).toBe(badge);
   });
 
   it("opens model settings from the unconfigured model badge", async () => {
@@ -429,6 +649,29 @@ describe("ThreadShell", () => {
     });
 
     expect(screen.getByText("persist me across tabs")).toBeInTheDocument();
+  });
+
+  it("highlights sent skill references without skill metadata", async () => {
+    const client = makeClient();
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session("skill-reference")}
+        title="Skill reference"
+        onToggleSidebar={() => {}}
+      />,
+    ));
+
+    fireEvent.change(screen.getByLabelText("Message input"), {
+      target: { value: "Use $github for this" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() =>
+      expectSendMessageWithTurn(client, "skill-reference", "Use $github for this"),
+    );
+    expect(screen.getByTestId("message-skill-reference-github"))
+      .toHaveTextContent("$github");
   });
 
   it("clears the old thread when the active session is removed", async () => {
@@ -720,7 +963,9 @@ describe("ThreadShell", () => {
     );
     await act(async () => {});
 
-    expect(screen.getByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
+    const greeting = screen.getByRole("heading", { level: 1, name: HERO_GREETING_PATTERN });
+    expect(greeting).toHaveAttribute("data-testid", "hero-greeting");
+    expect(greeting).toHaveClass("whitespace-nowrap");
     expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write code" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create a project plan" })).not.toBeInTheDocument();
@@ -1586,5 +1831,68 @@ describe("ThreadShell", () => {
 
     expect(screen.getByRole("listbox", { name: "Apps" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /@gimp/i })).toBeInTheDocument();
+  });
+
+  it("keeps installed app mentions available during transient catalog refresh failures", async () => {
+    const client = makeClient();
+    const payload: CliAppsPayload = {
+      apps: [{
+        name: "obsidian-agent-cli",
+        display_name: "Obsidian",
+        category: "productivity",
+        description: "Obsidian automation",
+        requires: "",
+        source: "harness",
+        entry_point: "cli-anything-obsidian",
+        install_supported: true,
+        installed: true,
+        available: true,
+        status: "installed",
+        logo_url: null,
+        brand_color: "#7C3AED",
+        skill_installed: true,
+      }],
+      installed_count: 1,
+      catalog_updated_at: "2026-07-14",
+    };
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      if (String(input).includes("/api/settings/cli-apps?installed_only=1")) {
+        throw new Error("temporary catalog failure");
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      } as Response;
+    });
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session("chat-cli-refresh")}
+        title="Chat chat-cli-refresh"
+        onToggleSidebar={() => {}}
+        onGoHome={() => {}}
+        onNewChat={() => {}}
+      />,
+    ));
+
+    const input = await screen.findByLabelText("Message input");
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(CLI_APPS_CHANGED_EVENT, { detail: payload }));
+    });
+    const mention = "@obsidian-agent-cli";
+    fireEvent.change(input, { target: { value: mention, selectionStart: mention.length } });
+    expect(screen.getByRole("option", { name: /@obsidian-agent-cli/i })).toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("option", { name: /@obsidian-agent-cli/i })).toBeInTheDocument();
+    expect(screen.getByTestId("composer-cli-mention-obsidian-agent-cli")).toHaveTextContent(
+      "@obsidian-agent-cli",
+    );
   });
 });

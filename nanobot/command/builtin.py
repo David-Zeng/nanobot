@@ -17,6 +17,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.utils.helpers import build_status_content
 from nanobot.utils.restart import set_restart_notice_to_env
+from nanobot.utils.workspace_prompts import initialize_workspace_prompt
 
 # WebUI protocol contract for how a slash command participates in turn state:
 # - side_channel: returns control text without starting or ending an agent turn.
@@ -144,6 +145,14 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         accepts_args=True,
     ),
     BuiltinCommandSpec(
+        "/evaluator-prompt",
+        "Heartbeat evaluator",
+        "Customize the heartbeat notification gate prompt for this workspace.",
+        "file-text",
+        "[init]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
         "/skill",
         "List skills",
         "List all enabled skills available to the agent.",
@@ -228,7 +237,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     """Build an outbound status message for a session."""
     loop = ctx.loop
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
-    runtime = ctx.runtime or loop.llm_runtime()
+    runtime = ctx.runtime or loop.runtime_for_session(session)
     ctx_est = 0
     with suppress(Exception):
         ctx_est, _ = loop.consolidator.estimate_session_prompt_tokens(
@@ -277,11 +286,12 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     await loop._cancel_active_tasks(ctx.key)
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
     snapshot = session.messages[session.last_consolidated:]
+    if snapshot:
+        runtime = ctx.runtime or loop.runtime_for_session(session)
     session.clear()
     loop.sessions.save(session)
     loop.sessions.invalidate(session.key)
     if snapshot:
-        runtime = ctx.runtime or loop.llm_runtime()
         loop._schedule_background(
             loop.consolidator.archive(
                 snapshot,
@@ -306,20 +316,25 @@ def _model_preset_names(loop) -> list[str]:
     return ["default", *sorted(name for name in names if name != "default")]
 
 
-def _active_model_preset_name(loop) -> str:
-    return loop.model_preset or "default"
-
-
 def _command_error_message(exc: Exception) -> str:
     return str(exc.args[0]) if isinstance(exc, KeyError) and exc.args else str(exc)
 
 
-def _model_command_status(loop) -> str:
+def _model_command_status(loop, session) -> str:
     names = _model_preset_names(loop)
-    active = _active_model_preset_name(loop)
+    try:
+        runtime = loop.runtime_for_session(session, recover_removed=False)
+    except (KeyError, ValueError) as exc:
+        return "\n".join([
+            "## Model",
+            f"- Current selection error: {_command_error_message(exc)}",
+            f"- Available presets: {_format_preset_names(names)}",
+            "- Switch with `/model <preset>`.",
+        ])
+    active = runtime.model_preset or "default"
     return "\n".join([
         "## Model",
-        f"- Current model: `{loop.model}`",
+        f"- Current model: `{runtime.model}`",
         f"- Current preset: `{active}`",
         f"- Available presets: {_format_preset_names(names)}",
     ])
@@ -332,10 +347,11 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
     metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
 
     if not args:
+        session = ctx.session or loop.sessions.get_or_create(ctx.key)
         return OutboundMessage(
             channel=ctx.msg.channel,
             chat_id=ctx.msg.chat_id,
-            content=_model_command_status(loop),
+            content=_model_command_status(loop, session),
             metadata=metadata,
         )
 
@@ -350,7 +366,7 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
 
     name = parts[0]
     try:
-        runtime = loop.set_model_preset(name)
+        runtime = loop.set_session_model_preset(ctx.key, name)
     except (KeyError, ValueError) as exc:
         names = _model_preset_names(loop)
         return OutboundMessage(
@@ -366,6 +382,7 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
     max_tokens = runtime.generation.max_tokens
     lines = [
         f"Switched model preset to `{runtime.model_preset}`.",
+        "- Scope: current session",
         f"- Model: `{runtime.model}`",
         f"- Context window: {runtime.context_window_tokens}",
     ]
@@ -472,20 +489,12 @@ async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        try:
-            prompt_exists_with_content = path.exists() and (
-                not path.is_file() or bool(path.read_text(encoding="utf-8").strip())
-            )
-        except OSError:
-            prompt_exists_with_content = True
-        if prompt_exists_with_content:
+        if not initialize_workspace_prompt(path, store.default_dream_prompt()):
             content = (
                 f"Dream memory instructions already exist at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."
             )
         else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(store.default_dream_prompt() + "\n", encoding="utf-8")
             content = (
                 f"Created Dream memory instructions at `{display_path}`.\n\n"
                 "Edit that file to teach Dream how to organize memory. "
@@ -505,6 +514,56 @@ async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
             "Dream memory instructions: nanobot default\n\n"
             f"- Editable file: `{display_path}`\n"
             "- Run `/dream-prompt init` to create an editable copy."
+        )
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
+    """Show or set up the workspace heartbeat evaluator prompt."""
+    from nanobot.utils.evaluator import (
+        default_evaluator_prompt,
+        evaluator_prompt_file,
+        has_evaluator_prompt_override,
+    )
+
+    workspace = ctx.loop.context.memory.workspace
+    path = evaluator_prompt_file(workspace)
+    display_path = path.relative_to(workspace).as_posix()
+    args = ctx.args.strip().lower()
+
+    if args == "init":
+        if not initialize_workspace_prompt(path, default_evaluator_prompt()):
+            content = (
+                f"Heartbeat evaluator prompt already exists at `{display_path}`.\n\n"
+                "Edit that file, or delete/empty it to return to nanobot's default."
+            )
+        else:
+            content = (
+                f"Created heartbeat evaluator prompt at `{display_path}`.\n\n"
+                "Edit that file to control when the heartbeat notification gate speaks. "
+                "It must still instruct the model to call the `evaluate_notification` tool, "
+                "otherwise the gate fails closed and stays silent. "
+                "Delete or empty it to return to nanobot's default."
+            )
+    elif args:
+        content = "Usage: /evaluator-prompt [init]"
+    elif has_evaluator_prompt_override(workspace):
+        content = (
+            "Heartbeat evaluator prompt: custom for this workspace\n\n"
+            f"- Path: `{display_path}`\n"
+            "- Delete or empty this file to return to nanobot's default."
+        )
+    else:
+        content = (
+            "Heartbeat evaluator prompt: nanobot default\n\n"
+            f"- Editable file: `{display_path}`\n"
+            "- Run `/evaluator-prompt init` to create an editable copy."
         )
 
     return OutboundMessage(
@@ -599,7 +658,7 @@ def _format_dream_restore_list(commits: list) -> str:
         "",
     ]
     for c in commits:
-        lines.append(f"- `{c.sha}` {c.timestamp} - {c.message.splitlines()[0]}")
+        lines.append(f"- `{c.sha}` {c.timestamp} - {c.subject()}")
     lines.extend([
         "",
         "Preview a version with `/dream-log <sha>` before restoring it.",
@@ -954,6 +1013,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/dream-restore ", cmd_dream_restore)
     router.exact("/dream-prompt", cmd_dream_prompt)
     router.prefix("/dream-prompt ", cmd_dream_prompt)
+    router.exact("/evaluator-prompt", cmd_evaluator_prompt)
+    router.prefix("/evaluator-prompt ", cmd_evaluator_prompt)
     router.exact("/skill", cmd_skill)
     router.exact("/help", cmd_help)
     router.exact("/pairing", cmd_pairing)
