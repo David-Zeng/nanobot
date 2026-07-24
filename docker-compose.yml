@@ -11,6 +11,10 @@ x-common-config: &common-config
     - ~/.config/gws:/home/nanobot/.config/gws
   environment:
     - AGENTMAIL_API_KEY=${AGENTMAIL_API_KEY}
+  # The image can bootstrap from root for Render, but this hardened Pi Compose
+  # deployment drops every capability. Start directly as the writable nanobot
+  # user so the entrypoint does not need CAP_CHOWN/CAP_SETUID to drop privileges.
+  user: "1000:1000"
   cap_drop:
     - ALL
   cap_add:
