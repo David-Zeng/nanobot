@@ -164,6 +164,7 @@ function stubVisualViewport({
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   Reflect.deleteProperty(window, "nanobotHost");
   if (ORIGINAL_MEDIA_DEVICES) {
     Object.defineProperty(navigator, "mediaDevices", {
@@ -291,6 +292,49 @@ function ascii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
 }
 
+const MODEL_PRESETS = [
+  { name: "kimi", label: "Kimi", provider: "moonshot" },
+  { name: "dflash", label: "DFlash", provider: "deepseek" },
+  { name: "dspro", label: "DS Pro", provider: "deepseek" },
+];
+
+function renderPresetComposer(variant: "thread" | "hero" = "thread") {
+  const onPresetChange = vi.fn();
+  render(
+    <ThreadComposer
+      onSend={vi.fn()}
+      modelLabel="Kimi"
+      modelPreset="kimi"
+      modelProvider="moonshot"
+      modelPresets={MODEL_PRESETS}
+      onModelPresetChange={onPresetChange}
+      placeholder={variant === "hero" ? "Ask anything..." : "Type your message..."}
+      variant={variant}
+    />,
+  );
+  return {
+    badge: screen.getByRole("spinbutton", { name: "Kimi" }),
+    onPresetChange,
+  };
+}
+
+function pointerDown(badge: HTMLElement, pointerId = 7, clientY = 100, button = 0) {
+  fireEvent.pointerDown(badge, {
+    button,
+    clientY,
+    isPrimary: true,
+    pointerId,
+    pointerType: "mouse",
+  });
+}
+
+function longPress(badge: HTMLElement, pointerId = 7) {
+  pointerDown(badge, pointerId);
+  act(() => {
+    vi.advanceTimersByTime(400);
+  });
+}
+
 describe("ThreadComposer", () => {
   it("focuses and sends a removable quoted answer excerpt", async () => {
     const onSend = vi.fn();
@@ -362,6 +406,34 @@ describe("ThreadComposer", () => {
     expect(input.parentElement?.parentElement?.className).toContain("max-w-[58rem]");
   });
 
+  it("lets long model preset labels use their intrinsic width", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        modelLabel="gpt-5.6-sol"
+        modelPreset="gpt-5-6-sol"
+        modelProvider="openai_codex"
+        modelPresets={[
+          {
+            name: "gpt-5-6-sol",
+            label: "gpt-5.6-sol",
+            model: "openai-codex/gpt-5.6-sol",
+            provider: "openai_codex",
+          },
+          ...MODEL_PRESETS,
+        ]}
+        onModelPresetChange={vi.fn()}
+        placeholder="Ask anything..."
+        variant="hero"
+      />,
+    );
+
+    const badge = screen.getByRole("spinbutton", { name: "gpt-5.6-sol" });
+    expect(badge).toHaveClass("w-fit", "max-w-[min(18rem,44vw)]");
+    expect(badge).not.toHaveClass("w-[5.75rem]");
+    expect(screen.getByText("gpt-5.6-sol")).toBeInTheDocument();
+  });
+
   it("keeps the thread composer compact while matching the hero style", () => {
     render(
       <ThreadComposer
@@ -384,6 +456,95 @@ describe("ThreadComposer", () => {
     expect(screen.getByRole("button", { name: "Attach files" }).className).toContain("bg-card");
     expect(screen.getByRole("button", { name: "Send message" }).className).toContain("bg-foreground");
     expect(screen.queryByText(/Enter to send/)).not.toBeInTheDocument();
+  });
+
+  it("scrolls complete preset pills after a left-button long press and wraps", () => {
+    vi.useFakeTimers();
+    const { badge, onPresetChange } = renderPresetComposer();
+    expect(badge).toHaveClass("h-9");
+    expect(badge).toHaveStyle({ touchAction: "manipulation" });
+    const idleTouchMove = new Event("touchmove", {
+      bubbles: true,
+      cancelable: true,
+    });
+    badge.dispatchEvent(idleTouchMove);
+    expect(idleTouchMove.defaultPrevented).toBe(false);
+    fireEvent.click(badge);
+    pointerDown(badge);
+    fireEvent.pointerMove(badge, { clientY: 80, pointerId: 7, pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.pointerUp(badge, { clientY: 80, pointerId: 7, pointerType: "mouse" });
+    expect(onPresetChange).not.toHaveBeenCalled();
+
+    longPress(badge);
+    expect(badge).toHaveAttribute("data-switching", "true");
+    const viewport = screen.getByTestId("composer-model-pill-viewport");
+    expect(viewport).toHaveClass(
+      "right-0",
+      "w-max",
+      "max-w-[calc(44vw+0.5rem)]",
+      "overflow-hidden",
+      "-top-3",
+      "-bottom-3",
+    );
+    const track = screen.getByTestId("composer-model-pill-track");
+    expect(track).toHaveClass("w-max", "max-w-full", "items-end", "gap-1");
+    const activeTouchMove = new Event("touchmove", {
+      bubbles: true,
+      cancelable: true,
+    });
+    badge.dispatchEvent(activeTouchMove);
+    expect(activeTouchMove.defaultPrevented).toBe(true);
+    const pills = track.querySelectorAll<HTMLElement>(".composer-model-pill");
+    expect(pills).toHaveLength(5);
+    expect(Array.from(pills).every((pill) => pill.classList.contains("w-fit"))).toBe(true);
+    expect(Array.from(pills).every((pill) => pill.querySelector("img"))).toBe(true);
+    expect(Array.from(badge.querySelectorAll("img")).every((image) => !image.draggable)).toBe(true);
+    const centeredPill = track.querySelector<HTMLElement>("[data-preset-offset='0']");
+    expect(centeredPill).toHaveTextContent("Kimi");
+    expect(centeredPill).toHaveStyle({ transform: "scale(1.0800)" });
+    expect(
+      track.querySelector<HTMLElement>("[data-preset-offset='1']"),
+    ).toHaveStyle({ transform: "scale(1.0200)" });
+
+    fireEvent.pointerMove(badge, {
+      clientY: 122,
+      pointerId: 7,
+      pointerType: "mouse",
+    });
+    expect(track.querySelector("[data-preset-offset='0']")).toHaveTextContent("Kimi");
+    fireEvent.pointerMove(badge, {
+      clientY: 123,
+      pointerId: 7,
+      pointerType: "mouse",
+    });
+    expect(track.querySelector("[data-preset-offset='0']")).toHaveTextContent("DS Pro");
+    fireEvent.pointerUp(badge, {
+      clientY: 123,
+      pointerId: 7,
+      pointerType: "mouse",
+    });
+
+    expect(onPresetChange).toHaveBeenCalledWith("dspro");
+    expect(badge).toHaveAttribute("data-settling", "true");
+    expect(track).toHaveAttribute("data-settling", "true");
+    act(() => {
+      vi.advanceTimersByTime(260);
+    });
+    expect(badge).not.toHaveAttribute("data-switching");
+    expect(badge).not.toHaveAttribute("data-settling");
+  });
+
+  it("supports the same long-press switcher in hero mode and cancels pointercancel", () => {
+    vi.useFakeTimers();
+    const { badge, onPresetChange } = renderPresetComposer("hero");
+    expect(badge).toHaveClass("h-8");
+    longPress(badge, 9);
+    expect(badge).toHaveAttribute("data-switching", "true");
+    fireEvent.pointerMove(badge, { clientY: 75, pointerId: 9, pointerType: "mouse" });
+    fireEvent.pointerCancel(badge, { clientY: 75, pointerId: 9, pointerType: "mouse" });
+    expect(badge).not.toHaveAttribute("data-switching");
+    expect(onPresetChange).not.toHaveBeenCalled();
   });
 
   it("transcribes voice input into the composer without sending", async () => {
@@ -912,11 +1073,57 @@ describe("ThreadComposer", () => {
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent(/Running/);
     expect(status).toHaveTextContent(/2:05/);
-    expect(status.parentElement).toHaveClass("composer-status-strip");
-    expect(status.parentElement).toHaveAttribute("data-state", "enter");
+    expect(status).toHaveClass("composer-status-drawer-content");
+    expect(status.closest("[data-composer-status-drawer]")).toHaveAttribute(
+      "data-state",
+      "open",
+    );
     expect(status.querySelector(".run-pulse-icon")).not.toBeNull();
 
     vi.useRealTimers();
+  });
+
+  it("opens and closes the run timer through one persistent drawer", () => {
+    const { container, rerender } = render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        runStartedAt={null}
+      />,
+    );
+
+    const drawer = container.querySelector("[data-composer-status-drawer]");
+    expect(drawer).not.toBeNull();
+    expect(drawer).toHaveAttribute("data-state", "closed");
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+
+    rerender(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        runStartedAt={Math.floor(Date.now() / 1000)}
+      />,
+    );
+
+    expect(container.querySelector("[data-composer-status-drawer]")).toBe(drawer);
+    expect(drawer).toHaveAttribute("data-state", "open");
+    expect(drawer).not.toHaveAttribute("aria-hidden");
+    const status = screen.getByRole("status");
+    expect(status).toHaveClass("composer-status-drawer-content");
+
+    rerender(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        runStartedAt={null}
+      />,
+    );
+
+    expect(container.querySelector("[data-composer-status-drawer]")).toBe(drawer);
+    expect(drawer).toHaveAttribute("data-state", "closed");
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(drawer?.querySelector('[role="status"]')).toBe(status);
   });
 
   it("opens an upward anchored goal panel with markdown content when expand is clicked", async () => {

@@ -7,6 +7,7 @@ import { FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
+import type { ModelPresetOption } from "@/components/thread/ModelPresetBadge";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
@@ -40,13 +41,8 @@ import type {
   WorkspaceScopePayload,
   WorkspacesPayload,
 } from "@/lib/types";
-import { normalizeLegacyLongTaskMessages } from "@/lib/thread-display-compat";
-import { scrubSubagentUiMessages } from "@/lib/subagent-channel-display";
+import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
 import { useClient } from "@/providers/ClientProvider";
-
-function projectWebuiThreadMessages(messages: UIMessage[]): UIMessage[] {
-  return scrubSubagentUiMessages(normalizeLegacyLongTaskMessages(messages));
-}
 
 type MessageShape = Pick<UIMessage, "role" | "kind" | "content">;
 
@@ -104,6 +100,18 @@ function isStaleThreadSnapshot(current: UIMessage[], snapshot: UIMessage[]): boo
   if (!preservesDurableMessages(current, snapshot)) return true;
   if (snapshot.length >= current.length) return false;
   return snapshot.every((message, index) => sameMessageShape(current[index], message));
+}
+
+function latestActiveTurnId(messages: UIMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.isStreaming && message.turnId) return message.turnId;
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.turnId) return message.turnId;
+  }
+  return null;
 }
 
 const FILE_PREVIEW_DEFAULT_WIDTH = 544;
@@ -165,6 +173,7 @@ function toModelBadgeLabel(modelName: string | null): string | null {
 
 interface ModelBadgeInfo {
   label: string | null;
+  model: string | null;
   provider: string | null;
   providerLabel: string | null;
   needsSetup: boolean;
@@ -196,7 +205,7 @@ function toModelBadgeInfo(
   const model = scopedPreset
     ? preset?.model || null
     : settings?.agent.model || modelName || null;
-  const label = toModelBadgeLabel(model);
+  const label = preset?.label?.trim() || scopedPreset || toModelBadgeLabel(model);
   const rawProvider = preset?.provider
     || (!scopedPreset ? settings?.agent.provider : null)
     || null;
@@ -213,10 +222,35 @@ function toModelBadgeInfo(
   );
   return {
     label,
+    model: toModelBadgeLabel(model),
     provider,
     providerLabel: provider ? providerDisplayLabel(settings?.providers ?? [], provider) : null,
     needsSetup,
   };
+}
+
+function modelPresetOptionsFromSettings(
+  settings: SettingsPayload | null,
+): ModelPresetOption[] {
+  if (!settings) return [];
+  const order = new Map(
+    (settings.model_call_order ?? []).map((name, index) => [name.trim(), index]),
+  );
+  return settings.model_presets
+    .filter((preset) => !preset.is_default && preset.name.trim())
+    .sort((a, b) => (
+      (order.get(a.name.trim()) ?? Number.POSITIVE_INFINITY)
+      - (order.get(b.name.trim()) ?? Number.POSITIVE_INFINITY)
+    ))
+    .map((preset) => {
+      const name = preset.name.trim();
+      return {
+        name,
+        label: preset.label?.trim() || name,
+        model: preset.model,
+        provider: preset.resolved_provider || preset.provider,
+      };
+    });
 }
 
 const HERO_GREETING_KEYS = [
@@ -422,8 +456,7 @@ export function ThreadShell({
   });
   const [settings, setSettings] = useState<SettingsPayload | null>(settingsSnapshot);
   const [heroGreetingKey, setHeroGreetingKey] = useState(randomHeroGreetingKey);
-  const [scrollToBottomSignal, setScrollToBottomSignal] = useState(0);
-  const [scrollToLatestUserPromptSignal, setScrollToLatestUserPromptSignal] = useState(0);
+  const [submittedViewportTurnId, setSubmittedViewportTurnId] = useState<string | null>(null);
   const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
   const [filePreviewClosing, setFilePreviewClosing] = useState(false);
   const [filePreviewWidth, setFilePreviewWidth] = useState(FILE_PREVIEW_DEFAULT_WIDTH);
@@ -435,6 +468,7 @@ export function ThreadShell({
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
+  const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const messageCacheRef = useRef<Map<string, UIMessage[]>>(new Map());
   /** Last chatId we associated with the in-memory thread (for cache-on-switch). */
   const prevChatIdForCacheRef = useRef<string | null>(null);
@@ -443,18 +477,20 @@ export function ThreadShell({
   const appliedHistoryVersionRef = useRef<Map<string, number>>(new Map());
   const pendingCanonicalHydrateRef = useRef<Set<string>>(new Set());
   const sessionKeyByChatIdRef = useRef<Map<string, string>>(new Map());
-  const bottomScrolledChatIdRef = useRef<string | null>(null);
 
   const initial = useMemo(() => {
     if (!chatId) return historical;
     return messageCacheRef.current.get(chatId) ?? historical;
   }, [chatId, historical]);
   const handleTurnEnd = useCallback(() => {
+    if (chatId) activeViewportTurnByChatIdRef.current.delete(chatId);
+    setSubmittedViewportTurnId(null);
     setFallbackModelName(null);
     onTurnEnd?.();
-  }, [onTurnEnd]);
+  }, [chatId, onTurnEnd]);
   const {
     messages,
+    messagesReady,
     isStreaming,
     runStartedAt,
     goalState,
@@ -482,6 +518,7 @@ export function ThreadShell({
     setFilePreviewClosing(false);
     setFilePreviewPath(null);
     setQuotedContext(null);
+    setSubmittedViewportTurnId(null);
   }, [historyKey]);
 
   const handleQuoteSelection = useCallback((text: string) => {
@@ -498,6 +535,28 @@ export function ThreadShell({
   }, []);
 
   const displayMessages = useMemo(() => projectWebuiThreadMessages(messages), [messages]);
+  const currentRunStartedAt = messagesReady ? runStartedAt : null;
+  const currentGoalState = messagesReady ? goalState : undefined;
+  const turnActive = messagesReady && (isStreaming || currentRunStartedAt !== null);
+  const restoredViewportTurnId = useMemo(
+    () => turnActive ? latestActiveTurnId(displayMessages) : null,
+    [displayMessages, turnActive],
+  );
+  const rememberedViewportTurnId = chatId
+    ? activeViewportTurnByChatIdRef.current.get(chatId) ?? null
+    : null;
+  const viewportTurnId = messagesReady && turnActive
+    ? rememberedViewportTurnId ?? restoredViewportTurnId
+    : null;
+  const activeTurnStartedHere =
+    viewportTurnId !== null && viewportTurnId === submittedViewportTurnId;
+  useEffect(() => {
+    if (!chatId || !messagesReady || turnActive) return;
+    activeViewportTurnByChatIdRef.current.delete(chatId);
+    setSubmittedViewportTurnId((current) =>
+      current === rememberedViewportTurnId ? null : current,
+    );
+  }, [chatId, messagesReady, rememberedViewportTurnId, turnActive]);
   const filePreviewAvailabilityCache = useMemo(
     () => new Map<string, FilePreviewAvailabilityCacheEntry>(),
     [historyKey, token],
@@ -541,12 +600,32 @@ export function ThreadShell({
     token,
   ]);
 
-  const showHeroComposer = messages.length === 0 && !loading;
+  const showHeroComposer = displayMessages.length === 0 && !loading;
   const wasShowingHeroComposerRef = useRef(showHeroComposer);
   const sessionModelPreset = session?.modelPreset?.trim() || null;
+  const [localModelPreset, setLocalModelPreset] = useState<string | null>(null);
+  useEffect(() => {
+    setLocalModelPreset(null);
+  }, [session?.key, sessionModelPreset]);
+  const activeModelPreset = (
+    localModelPreset
+    || sessionModelPreset
+    || settings?.agent.model_preset
+    || "default"
+  );
+  const handleModelPresetChange = useCallback((name: string) => {
+    setLocalModelPreset(name);
+    if (chatId) {
+      void client.sendSystemCommand(chatId, `/model ${name}`).catch(() => {});
+    }
+  }, [chatId, client]);
+  const modelPresetOptions = useMemo(
+    () => modelPresetOptionsFromSettings(settings),
+    [settings],
+  );
   const modelBadge = useMemo(
-    () => toModelBadgeInfo(modelName, settings, sessionModelPreset),
-    [modelName, sessionModelPreset, settings],
+    () => toModelBadgeInfo(modelName, settings, activeModelPreset),
+    [activeModelPreset, modelName, settings],
   );
   const modelBadgeLabel = modelBadge.needsSetup
     ? t("thread.composer.modelNotConfigured", { defaultValue: "Model not configured" })
@@ -629,17 +708,16 @@ export function ThreadShell({
         return normalizedHistory;
       }
       if (cached && cached.length > 0) {
-        const normalizedCached = projectWebuiThreadMessages(cached);
         if (
-          normalizedHistory.length > normalizedCached.length
+          normalizedHistory.length > cached.length
           && !isStaleThreadSnapshot(prev, normalizedHistory)
         ) {
           messageCacheRef.current.set(chatId, normalizedHistory);
           appliedHistoryVersionRef.current.set(chatId, historyVersion);
           return normalizedHistory;
         }
-        if (isStaleThreadSnapshot(prev, normalizedCached)) return keepLiveMessages(prev);
-        return normalizedCached;
+        if (isStaleThreadSnapshot(prev, cached)) return keepLiveMessages(prev);
+        return cached;
       }
       if (isStaleThreadSnapshot(prev, normalizedHistory)) return keepLiveMessages(prev);
       appliedHistoryVersionRef.current.set(chatId, historyVersion);
@@ -654,21 +732,13 @@ export function ThreadShell({
     return client.onSessionUpdate((updatedChatId, scope) => {
       if (updatedChatId !== chatId) return;
       if (scope === "metadata") return;
-      viewportRef.current?.cancelAutoScroll();
+      // A turn-end thread refresh can arrive while the viewport is easing the
+      // final layout change. User-driven scrolling already disables following,
+      // so keep an active programmatic follow alive across canonical hydration.
       pendingCanonicalHydrateRef.current.add(chatId);
       refreshHistory();
     });
   }, [chatId, client, refreshHistory]);
-
-  useEffect(() => {
-    if (!chatId) {
-      bottomScrolledChatIdRef.current = null;
-      return;
-    }
-    if (loading || bottomScrolledChatIdRef.current === chatId) return;
-    bottomScrolledChatIdRef.current = chatId;
-    setScrollToBottomSignal((value) => value + 1);
-  }, [chatId, loading]);
 
   useEffect(() => {
     if (chatId) return;
@@ -679,7 +749,7 @@ export function ThreadShell({
     if (chatId) {
       const prev = prevChatIdForCacheRef.current;
       if (prev && prev !== chatId) {
-        messageCacheRef.current.set(prev, projectWebuiThreadMessages(messages));
+        messageCacheRef.current.set(prev, displayMessages);
         skipLayoutCacheRef.current = true;
       }
       prevChatIdForCacheRef.current = chatId;
@@ -687,13 +757,13 @@ export function ThreadShell({
       if (prevChatIdForCacheRef.current) {
         messageCacheRef.current.set(
           prevChatIdForCacheRef.current,
-          projectWebuiThreadMessages(messages),
+          displayMessages,
         );
         skipLayoutCacheRef.current = true;
       }
       prevChatIdForCacheRef.current = null;
     }
-  }, [chatId, messages]);
+  }, [chatId, displayMessages]);
 
   // Persist thread to in-memory cache after paint so ``useNanobotStream``'s chat switch
   // ``useEffect`` reset has flushed; ``skipLayoutCacheRef`` drops the first run that still
@@ -709,8 +779,8 @@ export function ThreadShell({
     if (loading) {
       return;
     }
-    messageCacheRef.current.set(chatId, projectWebuiThreadMessages(messages));
-  }, [chatId, loading, messages]);
+    messageCacheRef.current.set(chatId, displayMessages);
+  }, [chatId, displayMessages, loading]);
 
   // The landing composer queues the first message while `new_chat` is in flight.
   // Only the chat created for that send may consume it; selecting another chat
@@ -724,8 +794,11 @@ export function ThreadShell({
     }
     pendingFirstRef.current = null;
     setPendingFirstTargetChatId(null);
-    setScrollToLatestUserPromptSignal((value) => value + 1);
-    send(pending.content, pending.images, pending.options);
+    const submitted = send(pending.content, pending.images, pending.options);
+    if (submitted && !submitted.sideChannel) {
+      activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
+      setSubmittedViewportTurnId(submitted.turnId);
+    }
     setBooting(false);
   }, [chatId, pendingFirstTargetChatId, send]);
 
@@ -757,18 +830,24 @@ export function ThreadShell({
         setBooting(false);
         return;
       }
+      if (localModelPreset) {
+        await client.sendSystemCommand(newId, `/model ${localModelPreset}`).catch(() => {});
+      }
       setPendingFirstTargetChatId(newId);
     },
-    [booting, onCreateChat, withWorkspaceScope, workspaceScope],
+    [booting, client, localModelPreset, onCreateChat, withWorkspaceScope, workspaceScope],
   );
 
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
       setFallbackModelName(null);
-      setScrollToLatestUserPromptSignal((value) => value + 1);
-      send(content, images, withWorkspaceScope(options));
+      const submitted = send(content, images, withWorkspaceScope(options));
+      if (chatId && submitted && !submitted.sideChannel) {
+        activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
+        setSubmittedViewportTurnId(submitted.turnId);
+      }
     },
-    [send, withWorkspaceScope],
+    [chatId, send, withWorkspaceScope],
   );
 
   const handleOpenFilePreview = useCallback((path: string) => {
@@ -883,13 +962,17 @@ export function ThreadShell({
         <ThreadComposer
           onSend={handleThreadSend}
           disabled={!chatId}
-          isStreaming={isStreaming}
+          isStreaming={turnActive}
           placeholder={
             showHeroComposer
               ? t("thread.composer.placeholderHero")
               : t("thread.composer.placeholderThread")
           }
           modelLabel={modelBadgeLabel}
+          modelDetail={modelBadge.model}
+          modelPreset={activeModelPreset}
+          modelPresets={modelPresetOptions}
+          onModelPresetChange={handleModelPresetChange}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -902,8 +985,8 @@ export function ThreadShell({
           skills={skills}
           onStop={stop}
           onTranscribeAudio={transcribeAudio}
-          runStartedAt={runStartedAt}
-          goalState={goalState}
+          runStartedAt={currentRunStartedAt}
+          goalState={currentGoalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}
           workspaceControls={workspaceControls}
@@ -921,13 +1004,17 @@ export function ThreadShell({
         <ThreadComposer
           onSend={handleWelcomeSend}
           disabled={booting}
-          isStreaming={isStreaming}
+          isStreaming={turnActive}
           placeholder={
             booting
               ? t("thread.composer.placeholderOpening")
               : t("thread.composer.placeholderHero")
           }
           modelLabel={modelBadgeLabel}
+          modelDetail={modelBadge.model}
+          modelPreset={activeModelPreset}
+          modelPresets={modelPresetOptions}
+          onModelPresetChange={handleModelPresetChange}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -938,9 +1025,9 @@ export function ThreadShell({
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           skills={skills}
-          runStartedAt={runStartedAt}
+          runStartedAt={currentRunStartedAt}
           onTranscribeAudio={transcribeAudio}
-          goalState={goalState}
+          goalState={currentGoalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}
           workspaceControls={workspaceControls}
@@ -996,12 +1083,13 @@ export function ThreadShell({
           <ThreadViewport
             ref={viewportRef}
             messages={displayMessages}
-            isStreaming={isStreaming}
+            isStreaming={turnActive}
             emptyState={emptyState}
             composer={composer}
-            scrollToBottomSignal={scrollToBottomSignal}
-            scrollToLatestUserPromptSignal={scrollToLatestUserPromptSignal}
+            activeTurnId={viewportTurnId}
+            activeTurnStartedHere={activeTurnStartedHere}
             conversationKey={historyKey}
+            conversationReady={messagesReady}
             showScrollToBottomButton={!!session}
             cliApps={cliApps}
             mcpPresets={mcpPresets}

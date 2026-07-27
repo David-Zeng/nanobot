@@ -61,6 +61,10 @@ import {
   WorkspaceProjectPicker,
 } from "@/components/thread/WorkspaceControls";
 import {
+  ModelPresetBadge,
+  type ModelPresetOption,
+} from "@/components/thread/ModelPresetBadge";
+import {
   ACCEPT_ATTR,
   MAX_ATTACHMENTS_PER_MESSAGE,
   useAttachedImages,
@@ -87,9 +91,7 @@ import type {
   WorkspacesPayload,
 } from "@/lib/types";
 import {
-  inferProviderFromModelName,
   logoFallbackUrls,
-  providerBrand,
 } from "@/lib/provider-brand";
 import {
   isSideChannelLifecycle,
@@ -168,6 +170,10 @@ interface ThreadComposerProps {
   placeholder?: string;
   isStreaming?: boolean;
   modelLabel?: string | null;
+  modelDetail?: string | null;
+  modelPreset?: string | null;
+  modelPresets?: ModelPresetOption[];
+  onModelPresetChange?: (name: string) => void;
   modelProvider?: string | null;
   modelProviderLabel?: string | null;
   modelNeedsSetup?: boolean;
@@ -578,8 +584,6 @@ function RunElapsedStrip({
   const stripLabel = goalStateStripPreview(goalState, t);
   const showGoal = !!stripLabel?.trim();
   const active = showTimer || showGoal;
-  const [renderStrip, setRenderStrip] = useState(active);
-  const [leaving, setLeaving] = useState(false);
   const [, setTick] = useState(0);
   const stripWrapperRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -596,20 +600,8 @@ function RunElapsedStrip({
   }
 
   useEffect(() => {
-    if (active) {
-      setRenderStrip(true);
-      setLeaving(false);
-      return;
-    }
-    setGoalPanelOpen(false);
-    if (!renderStrip) return;
-    setLeaving(true);
-    const id = window.setTimeout(() => {
-      setRenderStrip(false);
-      setLeaving(false);
-    }, 180);
-    return () => window.clearTimeout(id);
-  }, [active, renderStrip]);
+    if (!active) setGoalPanelOpen(false);
+  }, [active]);
 
   useEffect(() => {
     if (startedAt == null || !pageVisible) return;
@@ -693,8 +685,6 @@ function RunElapsedStrip({
     };
   }, [goalPanelOpen]);
 
-  if (!renderStrip || !display) return null;
-
   const elapsed =
     displayStartedAt != null ? Math.max(0, Math.floor(Date.now() / 1000 - displayStartedAt)) : 0;
   const m = Math.floor(elapsed / 60);
@@ -710,8 +700,10 @@ function RunElapsedStrip({
   return (
     <div
       ref={stripWrapperRef}
-      className="composer-status-strip relative z-30"
-      data-state={leaving ? "exit" : "enter"}
+      className="composer-status-drawer relative z-30"
+      data-composer-status-drawer=""
+      data-state={active ? "open" : "closed"}
+      aria-hidden={active ? undefined : true}
     >
       {goalPanelOpen && canExpandGoal && markdownBody ? (
         <div
@@ -758,50 +750,54 @@ function RunElapsedStrip({
           </div>
         </div>
       ) : null}
-      <div
-        className="flex min-h-[36px] items-center gap-2 border-b border-black/[0.04] px-3 py-2 dark:border-white/[0.06]"
-        role="status"
-        aria-label={ariaLabel}
-      >
-        {displayShowTimer ? (
-          <RunPulseIcon />
-        ) : (
-          <Target className="h-4 w-4 shrink-0 text-primary/75" aria-hidden />
-        )}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] font-medium text-foreground/75">
-          {timerTitle ? <span className="shrink-0">{timerTitle}</span> : null}
-          {timerTitle && displayShowGoal ? (
-            <span className="shrink-0 text-muted-foreground/45" aria-hidden>
-              ·
-            </span>
-          ) : null}
-          {displayShowGoal ? (
-            <span className="truncate">
-              {t("thread.composer.goalStateStrip", { label: displayStripLabel })}
-            </span>
-          ) : null}
-        </span>
-        {canExpandGoal ? (
-          <button
-            ref={expandToggleRef}
-            type="button"
-            className={cn(
-              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-              "text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            )}
-            aria-expanded={goalPanelOpen}
-            aria-controls={goalPanelOpen ? "nanobot-goal-panel-root" : undefined}
-            aria-label={t("thread.composer.goalStateExpandAria")}
-            title={t("thread.composer.goalStateExpandAria")}
-            onClick={() => setGoalPanelOpen((o) => !o)}
+      <div className="composer-status-drawer-clip">
+        {display ? (
+          <div
+            className="composer-status-drawer-content flex min-h-[36px] items-center gap-2 px-3 py-2"
+            role="status"
+            aria-label={ariaLabel}
           >
-            {goalPanelOpen ? (
-              <ChevronDown className="h-4 w-4" aria-hidden />
+            {displayShowTimer ? (
+              <RunPulseIcon />
             ) : (
-              <ChevronUp className="h-4 w-4" aria-hidden />
+              <Target className="h-4 w-4 shrink-0 text-primary/75" aria-hidden />
             )}
-          </button>
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] font-medium text-foreground/75">
+              {timerTitle ? <span className="shrink-0">{timerTitle}</span> : null}
+              {timerTitle && displayShowGoal ? (
+                <span className="shrink-0 text-muted-foreground/45" aria-hidden>
+                  ·
+                </span>
+              ) : null}
+              {displayShowGoal ? (
+                <span className="truncate">
+                  {t("thread.composer.goalStateStrip", { label: displayStripLabel })}
+                </span>
+              ) : null}
+            </span>
+            {canExpandGoal ? (
+              <button
+                ref={expandToggleRef}
+                type="button"
+                className={cn(
+                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                  "text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+                aria-expanded={goalPanelOpen}
+                aria-controls={goalPanelOpen ? "nanobot-goal-panel-root" : undefined}
+                aria-label={t("thread.composer.goalStateExpandAria")}
+                title={t("thread.composer.goalStateExpandAria")}
+                onClick={() => setGoalPanelOpen((o) => !o)}
+              >
+                {goalPanelOpen ? (
+                  <ChevronDown className="h-4 w-4" aria-hidden />
+                ) : (
+                  <ChevronUp className="h-4 w-4" aria-hidden />
+                )}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
@@ -814,6 +810,10 @@ export function ThreadComposer({
   placeholder,
   isStreaming = false,
   modelLabel = null,
+  modelDetail = null,
+  modelPreset = null,
+  modelPresets = [],
+  onModelPresetChange,
   modelProvider = null,
   modelProviderLabel = null,
   modelNeedsSetup = false,
@@ -2084,8 +2084,12 @@ export function ThreadComposer({
             )}
           >
             {modelLabel && !voiceRecorder.isRecording ? (
-              <ComposerModelBadge
+              <ModelPresetBadge
                 label={modelLabel}
+                modelDetail={modelDetail}
+                modelPreset={modelPreset}
+                modelPresets={modelPresets}
+                onPresetChange={onModelPresetChange}
                 provider={modelProvider}
                 providerLabel={modelProviderLabel}
                 needsSetup={modelNeedsSetup}
@@ -2370,94 +2374,6 @@ function QueuedPromptRow({
         <Trash2 className="h-3 w-3" aria-hidden />
       </Button>
     </div>
-  );
-}
-
-function ComposerModelBadge({
-  label,
-  provider,
-  providerLabel,
-  needsSetup,
-  fallbackModelName,
-  isHero,
-  onClick,
-}: {
-  label: string;
-  provider?: string | null;
-  providerLabel?: string | null;
-  needsSetup?: boolean;
-  fallbackModelName?: string | null;
-  isHero: boolean;
-  onClick?: () => void;
-}) {
-  const inferredProvider = needsSetup ? null : provider || inferProviderFromModelName(label);
-  const brand = providerBrand(inferredProvider);
-  const { logoUrl, onLogoError, onLogoLoad } = useLogoFallback(brand?.logoUrls);
-  const showLogo = !!logoUrl;
-  const title = providerLabel ? `${label} · ${providerLabel}` : label;
-  const interactive = Boolean(onClick);
-  const Container = interactive ? "button" : "span";
-
-  return (
-    <Container
-      data-fallback={fallbackModelName ? "true" : undefined}
-      title={fallbackModelName || title}
-      aria-label={label}
-      type={interactive ? "button" : undefined}
-      onClick={onClick}
-      className={cn(
-        "composer-model-badge thread-composer-model-badge inline-flex min-w-0 items-center rounded-full border border-border/55 bg-card font-medium text-foreground/82",
-        "shadow-[0_2px_8px_rgba(15,23,42,0.045)]",
-        interactive && "cursor-pointer hover:bg-accent/55 hover:text-foreground",
-        needsSetup && "border-amber-500/35 bg-amber-50/70 text-amber-900 dark:bg-amber-500/10 dark:text-amber-200",
-        isHero
-          ? "h-8 max-w-[min(12.5rem,44vw)] gap-1.5 px-2 text-[11.5px]"
-          : "h-9 max-w-[min(12rem,44vw)] gap-2 px-2.5 text-[12px]",
-      )}
-    >
-      <span
-        data-testid={needsSetup ? "composer-model-setup-icon" : inferredProvider ? `composer-model-logo-${inferredProvider}` : "composer-model-logo"}
-        className={cn(
-          "grid shrink-0 place-items-center overflow-hidden",
-          needsSetup
-            ? "text-amber-800 dark:text-amber-200"
-            : "rounded-full border bg-background",
-          isHero ? "h-[18px] w-[18px]" : "h-5 w-5",
-        )}
-        style={{
-          borderColor: !needsSetup && brand ? `${brand.color}28` : undefined,
-          boxShadow: !needsSetup && brand ? `inset 0 0 0 1px ${brand.color}18` : undefined,
-        }}
-        aria-hidden
-      >
-        {needsSetup ? (
-          <CircleHelp className={cn(isHero ? "h-3 w-3" : "h-3.5 w-3.5")} strokeWidth={1.8} />
-        ) : showLogo ? (
-          <img
-            src={logoUrl}
-            alt=""
-            decoding="async"
-            loading="lazy"
-            className={cn("object-contain", isHero ? "h-3 w-3" : "h-3.5 w-3.5")}
-            onLoad={onLogoLoad}
-            onError={onLogoError}
-          />
-        ) : brand ? (
-          <span
-            className={cn(
-              "grid h-full w-full place-items-center rounded-full text-white",
-              isHero ? "text-[7.5px]" : "text-[8px]",
-            )}
-            style={{ backgroundColor: brand.color }}
-          >
-            {brand.initials.slice(0, 2)}
-          </span>
-        ) : (
-          <Sparkles className={cn("text-muted-foreground/65", isHero ? "h-3 w-3" : "h-3 w-3")} />
-        )}
-      </span>
-      <span className="thread-composer-model-label truncate">{label}</span>
-    </Container>
   );
 }
 
